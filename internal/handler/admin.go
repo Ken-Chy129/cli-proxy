@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"context"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -101,14 +100,9 @@ func (h *AdminHandler) Status(c *gin.Context) {
 			"models":   dynamicModels,
 			"accounts": accountList,
 		}
-		// Add quota for codex
-		if p.name == "codex" && h.codexOAuth != nil && activeCount > 0 {
-			quota, err := h.codexOAuth.FetchQuota(context.Background())
-			if err != nil {
-				entry["quota_error"] = err.Error()
-			} else {
-				entry["quota"] = quota
-			}
+		// Add cached quota (populated from response headers)
+		if cached := auth.QuotaCache.Get(p.name); cached != nil {
+			entry["quota"] = cached
 		}
 		backends = append(backends, entry)
 	}

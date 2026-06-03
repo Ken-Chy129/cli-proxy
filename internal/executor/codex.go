@@ -13,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/user/cli-proxy/internal/auth"
+	internaltls "github.com/user/cli-proxy/internal/tls"
 	"github.com/user/cli-proxy/internal/types"
 )
 
@@ -250,11 +251,17 @@ func (e *CodexExecutor) doStream(ctx context.Context, req *types.ChatCompletionR
 	httpReq.Header.Set("x-codex-installation-id", installationID)
 	httpReq.Header.Set("x-client-request-id", uuid.New().String())
 
-	resp, err := http.DefaultClient.Do(httpReq)
+	httpClient := internaltls.NewAnthropicHTTPClient()
+	resp, err := httpClient.Do(httpReq)
 	if err != nil {
 		return fmt.Errorf("codex request: %w", err)
 	}
 	defer resp.Body.Close()
+
+	// Extract quota from response headers
+	if quota := auth.ParseCodexRateLimitHeaders(resp.Header); quota != nil {
+		auth.QuotaCache.Set("codex", quota)
+	}
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)

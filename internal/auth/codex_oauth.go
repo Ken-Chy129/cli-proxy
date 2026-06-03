@@ -6,10 +6,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/cookiejar"
 	"net/url"
 	"strings"
 	"sync"
 	"time"
+
+	internaltls "github.com/user/cli-proxy/internal/tls"
 )
 
 const (
@@ -29,12 +32,13 @@ type codexTokenResponse struct {
 }
 
 type CodexOAuth struct {
-	store *TokenStore
-	mu    sync.Mutex
+	store      *TokenStore
+	mu         sync.Mutex
+	httpClient *http.Client
 }
 
 func NewCodexOAuth(store *TokenStore) *CodexOAuth {
-	return &CodexOAuth{store: store}
+	return &CodexOAuth{store: store, httpClient: internaltls.NewAnthropicHTTPClient()}
 }
 
 func (o *CodexOAuth) GetToken(ctx context.Context) (string, error) {
@@ -73,7 +77,7 @@ func (o *CodexOAuth) refresh(ctx context.Context, token *TokenData) (string, err
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := o.httpClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("codex refresh request failed: %w", err)
 	}
@@ -190,7 +194,7 @@ func (o *CodexOAuth) exchangeCode(ctx context.Context, code, codeVerifier string
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := o.httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("codex token exchange failed: %w", err)
 	}
@@ -234,7 +238,7 @@ func (o *CodexOAuth) FetchModels(ctx context.Context) ([]ModelInfo, error) {
 	req, _ := http.NewRequestWithContext(ctx, "GET", codexBaseURL+"/codex/models?client_version=0.135.0", nil)
 	applyCodexHeaders(req, token)
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := o.httpClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -288,10 +292,21 @@ func (o *CodexOAuth) FetchQuota(ctx context.Context) (*QuotaInfo, error) {
 		return nil, err
 	}
 
+	// Warmup: hit /codex/models first to establish CF cookies, then /codex/usage
+	jar, _ := cookiejar.New(nil)
+	client := &http.Client{Jar: jar, Transport: o.httpClient.Transport}
+
+	warmupReq, _ := http.NewRequestWithContext(ctx, "GET", codexBaseURL+"/codex/models?client_version=0.135.0", nil)
+	applyCodexHeaders(warmupReq, token)
+	if warmupResp, err := client.Do(warmupReq); err == nil {
+		io.ReadAll(warmupResp.Body)
+		warmupResp.Body.Close()
+	}
+
 	req, _ := http.NewRequestWithContext(ctx, "GET", codexBaseURL+"/codex/usage", nil)
 	applyCodexHeaders(req, token)
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -329,7 +344,7 @@ func (o *CodexOAuth) FetchQuota(ctx context.Context) (*QuotaInfo, error) {
 	}
 	if raw.RateLimit.PrimaryWindow != nil {
 		info.RateLimit.UsedPercent = raw.RateLimit.PrimaryWindow.UsedPercent
-		info.RateLimit.ResetAfterS = raw.RateLimit.PrimaryWindow.ResetAfterSeconds
+		info.RateLimit.ResetMinutes = int(raw.RateLimit.PrimaryWindow.ResetAfterSeconds / 60)
 	}
 	if raw.Credits != nil {
 		info.Credits = &Credits{

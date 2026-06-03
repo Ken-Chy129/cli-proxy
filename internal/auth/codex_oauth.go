@@ -213,3 +213,123 @@ func (o *CodexOAuth) exchangeCode(ctx context.Context, code, codeVerifier string
 		ExpiresAt:    time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second).Format(time.RFC3339),
 	}, nil
 }
+
+const codexBaseURL = "https://chatgpt.com/backend-api"
+
+func (o *CodexOAuth) FetchModels(ctx context.Context) ([]ModelInfo, error) {
+	token, err := o.GetToken(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	req, _ := http.NewRequestWithContext(ctx, "GET", codexBaseURL+"/codex/models?client_version=0.135.0", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("fetch codex models: %d %s", resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		Models []struct {
+			Slug        string `json:"slug"`
+			DisplayName string `json:"display_name"`
+			Description string `json:"description"`
+		} `json:"models"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		// Try categories format
+		var catResult struct {
+			Categories []struct {
+				Models []struct {
+					Slug        string `json:"slug"`
+					DisplayName string `json:"display_name"`
+					Description string `json:"description"`
+				} `json:"models"`
+			} `json:"categories"`
+		}
+		if err2 := json.Unmarshal(body, &catResult); err2 == nil {
+			var models []ModelInfo
+			for _, cat := range catResult.Categories {
+				for _, m := range cat.Models {
+					models = append(models, ModelInfo{Slug: m.Slug, DisplayName: m.DisplayName, Description: m.Description})
+				}
+			}
+			return models, nil
+		}
+		return nil, err
+	}
+
+	models := make([]ModelInfo, len(result.Models))
+	for i, m := range result.Models {
+		models[i] = ModelInfo{Slug: m.Slug, DisplayName: m.DisplayName, Description: m.Description}
+	}
+	return models, nil
+}
+
+func (o *CodexOAuth) FetchQuota(ctx context.Context) (*QuotaInfo, error) {
+	token, err := o.GetToken(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	req, _ := http.NewRequestWithContext(ctx, "GET", codexBaseURL+"/codex/usage", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("fetch codex usage: %d", resp.StatusCode)
+	}
+
+	var raw struct {
+		PlanType  string `json:"plan_type"`
+		RateLimit struct {
+			Allowed      bool `json:"allowed"`
+			LimitReached bool `json:"limit_reached"`
+			PrimaryWindow *struct {
+				UsedPercent      float64 `json:"used_percent"`
+				ResetAfterSeconds float64 `json:"reset_after_seconds"`
+			} `json:"primary_window"`
+		} `json:"rate_limit"`
+		Credits *struct {
+			HasCredits bool   `json:"has_credits"`
+			Unlimited  bool   `json:"unlimited"`
+			Balance    string `json:"balance"`
+		} `json:"credits"`
+	}
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return nil, err
+	}
+
+	info := &QuotaInfo{PlanType: raw.PlanType}
+	info.RateLimit = &RateLimit{
+		Allowed:      raw.RateLimit.Allowed,
+		LimitReached: raw.RateLimit.LimitReached,
+	}
+	if raw.RateLimit.PrimaryWindow != nil {
+		info.RateLimit.UsedPercent = raw.RateLimit.PrimaryWindow.UsedPercent
+		info.RateLimit.ResetAfterS = raw.RateLimit.PrimaryWindow.ResetAfterSeconds
+	}
+	if raw.Credits != nil {
+		info.Credits = &Credits{
+			HasCredits: raw.Credits.HasCredits,
+			Unlimited:  raw.Credits.Unlimited,
+			Balance:    raw.Credits.Balance,
+		}
+	}
+	return info, nil
+}

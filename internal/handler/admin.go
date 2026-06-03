@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -19,10 +20,11 @@ type AdminHandler struct {
 	router     *router.Router
 	tokenStore *auth.TokenStore
 	statsDB    *stats.DB
+	codexOAuth *auth.CodexOAuth
 }
 
-func NewAdminHandler(cfg *config.Config, r *router.Router, store *auth.TokenStore, db *stats.DB) *AdminHandler {
-	return &AdminHandler{cfg: cfg, router: r, tokenStore: store, statsDB: db}
+func NewAdminHandler(cfg *config.Config, r *router.Router, store *auth.TokenStore, db *stats.DB, codexOAuth *auth.CodexOAuth) *AdminHandler {
+	return &AdminHandler{cfg: cfg, router: r, tokenStore: store, statsDB: db, codexOAuth: codexOAuth}
 }
 
 func (h *AdminHandler) Status(c *gin.Context) {
@@ -87,13 +89,25 @@ func (h *AdminHandler) Status(c *gin.Context) {
 			status = "expired"
 		}
 		info := fmt.Sprintf("%d/%d active", activeCount, len(accounts))
-		backends = append(backends, gin.H{
+		// Use dynamic models from router instead of config
+		dynamicModels := h.router.ModelsByBackend(p.name)
+		if len(dynamicModels) == 0 {
+			dynamicModels = p.models
+		}
+		entry := gin.H{
 			"name":     p.name,
 			"status":   status,
 			"info":     info,
-			"models":   p.models,
+			"models":   dynamicModels,
 			"accounts": accountList,
-		})
+		}
+		// Add quota for codex
+		if p.name == "codex" && h.codexOAuth != nil && activeCount > 0 {
+			if quota, err := h.codexOAuth.FetchQuota(context.Background()); err == nil {
+				entry["quota"] = quota
+			}
+		}
+		backends = append(backends, entry)
 	}
 
 	totalReqs, totalTokens, _ := h.statsDB.TotalStats()
@@ -166,6 +180,25 @@ func (h *AdminHandler) Config(c *gin.Context) {
 			"models":  h.cfg.Codex.Models,
 		},
 	})
+}
+
+func (h *AdminHandler) SyncModels(c *gin.Context) {
+	results := gin.H{}
+
+	if h.codexOAuth != nil {
+		models, err := h.codexOAuth.FetchModels(c.Request.Context())
+		if err != nil {
+			results["codex"] = gin.H{"error": err.Error()}
+		} else {
+			slugs := make([]string, len(models))
+			for i, m := range models {
+				slugs[i] = m.Slug
+			}
+			results["codex"] = gin.H{"models": slugs, "count": len(slugs)}
+		}
+	}
+
+	c.JSON(http.StatusOK, results)
 }
 
 func (h *AdminHandler) DeleteAccount(c *gin.Context) {

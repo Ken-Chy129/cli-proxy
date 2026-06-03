@@ -248,10 +248,29 @@ async function loadStatus(){
       }).join('');
     }
     const addBtn=isOAuth?'<a href="/auth/'+b.name+'" class="btn-add"><span>+</span> Add Account</a>':'';
+    let quotaHTML='';
+    if(b.quota){
+      const q=b.quota;
+      const plan='<span class="model-tag" style="background:var(--accent-dim);color:var(--text-0)">'+q.plan_type+'</span>';
+      let rl='';
+      if(q.rate_limit){
+        const pct=Math.round(q.rate_limit.used_percent||0);
+        const barW=Math.min(pct,100);
+        const barColor=q.rate_limit.limit_reached?'var(--red)':pct>80?'var(--yellow)':'var(--green)';
+        rl='<div style="margin-top:6px"><div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text-2);margin-bottom:2px"><span>Rate limit</span><span>'+pct+'%'+(q.rate_limit.limit_reached?' (reached)':'')+'</span></div>'
+          +'<div style="height:4px;background:var(--bg-3);border-radius:2px;overflow:hidden"><div style="width:'+barW+'%;height:100%;background:'+barColor+';border-radius:2px"></div></div></div>';
+      }
+      let credits='';
+      if(q.credits&&q.credits.has_credits){
+        credits='<div style="font-size:11px;color:var(--text-2);margin-top:4px">Credits: '+(q.credits.unlimited?'Unlimited':'$'+q.credits.balance)+'</div>';
+      }
+      quotaHTML='<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border)">'+plan+rl+credits+'</div>';
+    }
+    const syncBtn=isOAuth&&b.status==='active'?'<button class="btn-add" style="margin-left:4px" onclick="syncModels()">Sync Models</button>':'';
     return '<div class="backend-card"><div class="backend-header"><span class="dot '+dc+'"></span><span class="backend-name" style="text-transform:capitalize">'+b.name+'</span><span class="backend-badge '+bc+'">'+bl+'</span></div>'
       +'<div class="backend-info">'+(b.info||'')+'</div>'
       +'<div class="backend-models">'+(b.models||[]).map(m=>'<span class="model-tag">'+m+'</span>').join('')+'</div>'
-      +accts+addBtn+'</div>';
+      +accts+'<div style="display:flex;gap:4px;flex-wrap:wrap">'+addBtn+syncBtn+'</div>'+quotaHTML+'</div>';
   }).join('');
 
   const sel=document.getElementById('chat-model');
@@ -336,6 +355,11 @@ function switchTab(name,el){
   if(name==='logs')loadLogs();
   if(name==='stats')loadStats('7d');
   if(name==='config')loadConfig();
+}
+
+async function syncModels(){
+  await fetch('/api/sync-models',{method:'POST'});
+  loadStatus();
 }
 
 async function removeAccount(provider,id){

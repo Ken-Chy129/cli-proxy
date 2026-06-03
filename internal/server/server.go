@@ -8,40 +8,39 @@ import (
 	"github.com/user/cli-proxy/internal/auth"
 	"github.com/user/cli-proxy/internal/config"
 	"github.com/user/cli-proxy/internal/dashboard"
+	"github.com/user/cli-proxy/internal/executor"
 	"github.com/user/cli-proxy/internal/handler"
 	"github.com/user/cli-proxy/internal/router"
 	"github.com/user/cli-proxy/internal/stats"
 )
 
-func Run(cfg *config.Config, r *router.Router, tokenStore *auth.TokenStore, statsDB *stats.DB, claudeOAuth *auth.ClaudeOAuth, codexOAuth *auth.CodexOAuth) error {
+func Run(cfg *config.Config, r *router.Router, tokenStore *auth.TokenStore, statsDB *stats.DB,
+	claudeOAuth *auth.ClaudeOAuth, codexOAuth *auth.CodexOAuth,
+	claudeExec *executor.ClaudeOAuthExecutor, codexExec *executor.CodexExecutor) error {
+
 	gin.SetMode(gin.ReleaseMode)
 	engine := gin.New()
 	engine.Use(gin.Recovery())
 
 	chatHandler := handler.NewChatHandler(r, statsDB)
-	responsesHandler := handler.NewResponsesHandler(r, statsDB)
-	adminHandler := handler.NewAdminHandler(cfg, r, tokenStore, statsDB)
+	adminHandler := handler.NewAdminHandler(cfg, r, tokenStore, statsDB, codexOAuth)
 
-	// Dashboard
 	engine.GET("/", dashboard.Handler())
 
-	// API routes (protected by api_key if set)
 	api := engine.Group("/")
 	if cfg.Server.APIKey != "" {
 		api.Use(APIKeyAuth(cfg.Server.APIKey))
 	}
 	api.POST("/v1/chat/completions", chatHandler.ChatCompletions)
-	api.POST("/v1/responses", responsesHandler.HandleResponses)
 	api.GET("/v1/models", chatHandler.ListModels)
 
-	// Admin API (no api_key needed, local access only)
 	engine.GET("/api/status", adminHandler.Status)
 	engine.GET("/api/logs", adminHandler.Logs)
 	engine.GET("/api/stats", adminHandler.Stats)
 	engine.GET("/api/config", adminHandler.Config)
+	engine.POST("/api/sync-models", adminHandler.SyncModels)
 	engine.DELETE("/api/accounts/:provider/:id", adminHandler.DeleteAccount)
 
-	// OAuth login routes
 	if claudeOAuth != nil {
 		engine.GET("/auth/claude", func(c *gin.Context) {
 			authURL, err := claudeOAuth.StartLogin()

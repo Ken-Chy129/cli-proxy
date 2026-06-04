@@ -13,8 +13,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	internaltls "github.com/user/cli-proxy/internal/tls"
 )
 
 const (
@@ -100,7 +98,7 @@ type CodexOAuth struct {
 }
 
 func NewCodexOAuth(store *TokenStore) *CodexOAuth {
-	return &CodexOAuth{store: store, httpClient: internaltls.NewAnthropicHTTPClient(), ServerPort: 9090}
+	return &CodexOAuth{store: store, httpClient: &http.Client{}, ServerPort: 9090}
 }
 
 func (o *CodexOAuth) GetTokenData(_ context.Context) *TokenData {

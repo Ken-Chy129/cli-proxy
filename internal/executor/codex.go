@@ -13,7 +13,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/user/cli-proxy/internal/auth"
-	internaltls "github.com/user/cli-proxy/internal/tls"
 	"github.com/user/cli-proxy/internal/types"
 )
 
@@ -257,8 +256,7 @@ func (e *CodexExecutor) doStream(ctx context.Context, req *types.ChatCompletionR
 	httpReq.Header.Set("x-codex-installation-id", installationID)
 	httpReq.Header.Set("x-client-request-id", uuid.New().String())
 
-	httpClient := internaltls.NewAnthropicHTTPClient()
-	resp, err := httpClient.Do(httpReq)
+	resp, err := http.DefaultClient.Do(httpReq)
 	if err != nil {
 		return fmt.Errorf("codex request: %w", err)
 	}

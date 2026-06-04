@@ -10,19 +10,21 @@ import (
 
 type QuotaInfo struct {
 	AccountID   string         `json:"account_id"`
+	Email       string         `json:"email,omitempty"`
 	PlanType    string         `json:"plan_type,omitempty"`
 	Primary     *RateWindow    `json:"primary,omitempty"`
 	Secondary   *RateWindow    `json:"secondary,omitempty"`
 	Additional  []AdditionalRL `json:"additional,omitempty"`
 	Credits     *Credits       `json:"credits,omitempty"`
 	FetchedAt   string         `json:"fetched_at,omitempty"`
+	HasRealData bool           `json:"has_real_data"`
 }
 
 type RateWindow struct {
-	Label        string  `json:"label"`
-	UsedPercent  float64 `json:"used_percent"`
-	LimitReached bool    `json:"limit_reached"`
-	ResetAt      string  `json:"reset_at,omitempty"`
+	Label            string  `json:"label"`
+	RemainingPercent float64 `json:"remaining_percent"`
+	LimitReached     bool    `json:"limit_reached"`
+	ResetAt          string  `json:"reset_at,omitempty"`
 }
 
 type AdditionalRL struct {
@@ -118,7 +120,7 @@ func ParseCodexRateLimitHeaders(h http.Header) *QuotaInfo {
 		return nil
 	}
 
-	info := &QuotaInfo{FetchedAt: time.Now().Format("01/02 15:04")}
+	info := &QuotaInfo{FetchedAt: time.Now().Format("01/02 15:04"), HasRealData: true}
 
 	winMin := 300
 	if v := h.Get("x-codex-primary-window-minutes"); v != "" {
@@ -132,11 +134,12 @@ func ParseCodexRateLimitHeaders(h http.Header) *QuotaInfo {
 			resetAt = formatResetAt(n)
 		}
 	}
+	remaining := math.Max(0, math.Round((100-pct)*100)/100)
 	info.Primary = &RateWindow{
-		Label:        windowLabel(winMin),
-		UsedPercent:  math.Round(pct*100) / 100,
-		LimitReached: pct >= 100,
-		ResetAt:      resetAt,
+		Label:            windowLabel(winMin),
+		RemainingPercent: remaining,
+		LimitReached:     pct >= 100,
+		ResetAt:          resetAt,
 	}
 
 	if secPctStr := h.Get("x-codex-secondary-used-percent"); secPctStr != "" {
@@ -153,11 +156,12 @@ func ParseCodexRateLimitHeaders(h http.Header) *QuotaInfo {
 					secReset = formatResetAt(n)
 				}
 			}
+			secRemaining := math.Max(0, math.Round((100-secPct)*100)/100)
 			info.Secondary = &RateWindow{
-				Label:        windowLabel(secWinMin),
-				UsedPercent:  math.Round(secPct*100) / 100,
-				LimitReached: secPct >= 100,
-				ResetAt:      secReset,
+				Label:            windowLabel(secWinMin),
+				RemainingPercent: secRemaining,
+				LimitReached:     secPct >= 100,
+				ResetAt:          secReset,
 			}
 		}
 	}

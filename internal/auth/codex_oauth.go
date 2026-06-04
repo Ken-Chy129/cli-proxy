@@ -409,7 +409,7 @@ func (o *CodexOAuth) FetchQuotaWithClient(ctx context.Context, client *http.Clie
 	if pw := raw.RateLimit.PrimaryWindow; pw != nil {
 		info.Primary = &RateWindow{
 			Label:        windowLabel(int(pw.LimitWindowSecs / 60)),
-			UsedPercent:  math.Round(pw.UsedPercent*100) / 100,
+			RemainingPercent: math.Max(0, math.Round((100-pw.UsedPercent)*100)/100),
 			LimitReached: pw.UsedPercent >= 100 || raw.RateLimit.LimitReached,
 			ResetAt:      formatResetAt(pw.ResetAt),
 		}
@@ -418,7 +418,7 @@ func (o *CodexOAuth) FetchQuotaWithClient(ctx context.Context, client *http.Clie
 	if sw := raw.RateLimit.SecondaryWindow; sw != nil {
 		info.Secondary = &RateWindow{
 			Label:        windowLabel(int(sw.LimitWindowSecs / 60)),
-			UsedPercent:  math.Round(sw.UsedPercent*100) / 100,
+			RemainingPercent: math.Max(0, math.Round((100-sw.UsedPercent)*100)/100),
 			LimitReached: sw.UsedPercent >= 100,
 			ResetAt:      formatResetAt(sw.ResetAt),
 		}
@@ -431,7 +431,7 @@ func (o *CodexOAuth) FetchQuotaWithClient(ctx context.Context, client *http.Clie
 				Name: arl.LimitName,
 				Primary: &RateWindow{
 					Label:        arl.LimitName + " " + windowLabel(int(pw.LimitWindowSecs/60)),
-					UsedPercent:  math.Round(pw.UsedPercent*100) / 100,
+					RemainingPercent: math.Max(0, math.Round((100-pw.UsedPercent)*100)/100),
 					LimitReached: pw.UsedPercent >= 100,
 					ResetAt:      formatResetAt(pw.ResetAt),
 				},
@@ -498,8 +498,7 @@ func (o *CodexOAuth) FetchAllQuotas(ctx context.Context) {
 			planType = raw.PlanType
 		}
 
-		// Reparse full quota using FetchQuotaWithClient-style parsing
-		info := &QuotaInfo{AccountID: acc.ID, PlanType: planType, FetchedAt: time.Now().Format("01/02 15:04")}
+		info := &QuotaInfo{AccountID: acc.ID, Email: acc.Email, PlanType: planType, FetchedAt: time.Now().Format("01/02 15:04"), HasRealData: true}
 		parseUsageBody(body, info)
 		QuotaCache.Set("codex:"+acc.ID, info)
 	}
@@ -537,7 +536,7 @@ func parseUsageBody(body []byte, info *QuotaInfo) {
 	if pw := raw.RateLimit.PrimaryWindow; pw != nil {
 		info.Primary = &RateWindow{
 			Label:        windowLabel(int(pw.LimitWindowSecs / 60)),
-			UsedPercent:  math.Round(pw.UsedPercent*100) / 100,
+			RemainingPercent: math.Max(0, math.Round((100-pw.UsedPercent)*100)/100),
 			LimitReached: pw.UsedPercent >= 100 || raw.RateLimit.LimitReached,
 			ResetAt:      formatResetAt(pw.ResetAt),
 		}
@@ -545,7 +544,7 @@ func parseUsageBody(body []byte, info *QuotaInfo) {
 	if sw := raw.RateLimit.SecondaryWindow; sw != nil {
 		info.Secondary = &RateWindow{
 			Label:        windowLabel(int(sw.LimitWindowSecs / 60)),
-			UsedPercent:  math.Round(sw.UsedPercent*100) / 100,
+			RemainingPercent: math.Max(0, math.Round((100-sw.UsedPercent)*100)/100),
 			LimitReached: sw.UsedPercent >= 100,
 			ResetAt:      formatResetAt(sw.ResetAt),
 		}
@@ -557,7 +556,7 @@ func parseUsageBody(body []byte, info *QuotaInfo) {
 				Name: arl.LimitName,
 				Primary: &RateWindow{
 					Label:        arl.LimitName,
-					UsedPercent:  math.Round(pw.UsedPercent*100) / 100,
+					RemainingPercent: math.Max(0, math.Round((100-pw.UsedPercent)*100)/100),
 					LimitReached: pw.UsedPercent >= 100,
 					ResetAt:      formatResetAt(pw.ResetAt),
 				},

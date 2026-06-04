@@ -292,15 +292,21 @@ async function loadStatus(){
     qGrid.innerHTML=allQuotas.map(q=>{
       const planCls=q.plan_type?.toLowerCase().includes('pro')?'plan-pro':q.plan_type?.toLowerCase().includes('plus')?'plan-plus':'plan-team';
       const planLabel=q.plan_type||'Unknown';
+      const displayName=q.email||q.account_id;
       const renderRow=(w)=>{
         if(!w)return '';
-        const pct=Math.round(w.used_percent||0);
-        const barColor=w.limit_reached?'var(--red)':pct>80?'var(--yellow)':'var(--green)';
+        const pct=Math.round(w.remaining_percent||0);
+        const barColor=w.limit_reached?'var(--red)':pct<20?'var(--yellow)':'var(--green)';
         return '<div class="quota-row"><div class="quota-row-header"><span class="quota-row-label">'+w.label+'</span><span class="quota-row-value"><span class="pct">'+pct+'%</span>'+(w.reset_at||'')+'</span></div><div class="quota-bar"><div class="quota-bar-fill" style="width:'+Math.min(pct,100)+'%;background:'+barColor+'"></div></div></div>';
       };
-      let rows=renderRow(q.primary)+renderRow(q.secondary);
-      if(q.additional){q.additional.forEach(a=>{if(a.primary)rows+=renderRow(a.primary);});}
-      return '<div class="quota-card"><div class="quota-card-header"><span class="model-tag" style="background:var(--accent-dim);color:var(--text-0)">Codex</span><span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+q.account_id+'</span></div><div style="margin-bottom:8px"><span class="quota-card-header plan-badge '+planCls+'">'+planLabel+'</span></div>'+rows+'</div>';
+      let rows='';
+      if(q.has_real_data){
+        rows=renderRow(q.primary)+renderRow(q.secondary);
+        if(q.additional){q.additional.forEach(a=>{if(a.primary)rows+=renderRow(a.primary);});}
+      } else {
+        rows='<div style="font-size:12px;color:var(--text-2);padding:4px 0">Awaiting data (send a request to update)</div>';
+      }
+      return '<div class="quota-card"><div class="quota-card-header"><span class="model-tag" style="background:var(--accent-dim);color:var(--text-0)">Codex</span><span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+displayName+'</span></div><div style="margin-bottom:8px"><span class="plan-badge '+planCls+'">'+planLabel+'</span></div>'+rows+'</div>';
     }).join('');
   } else {
     qSection.style.display='none';

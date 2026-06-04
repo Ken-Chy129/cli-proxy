@@ -33,7 +33,38 @@ type codexTokenResponse struct {
 	IDToken      string `json:"id_token"`
 }
 
-// parseJWTPlanType extracts chatgpt_plan_type from a JWT id_token without signature verification.
+type JWTInfo struct {
+	PlanType string
+	Email    string
+}
+
+func ParseJWT(token string) JWTInfo {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return JWTInfo{}
+	}
+	payload := parts[1]
+	switch len(payload) % 4 {
+	case 2:
+		payload += "=="
+	case 3:
+		payload += "="
+	}
+	data, err := base64.URLEncoding.DecodeString(payload)
+	if err != nil {
+		return JWTInfo{}
+	}
+	var claims struct {
+		Email string `json:"email"`
+		Auth  struct {
+			PlanType string `json:"chatgpt_plan_type"`
+		} `json:"https://api.openai.com/auth"`
+	}
+	json.Unmarshal(data, &claims)
+	return JWTInfo{PlanType: claims.Auth.PlanType, Email: claims.Email}
+}
+
+// ParseJWTPlanType extracts chatgpt_plan_type from a JWT id_token without signature verification.
 func ParseJWTPlanType(idToken string) string {
 	parts := strings.Split(idToken, ".")
 	if len(parts) != 3 {
@@ -244,22 +275,19 @@ func (o *CodexOAuth) exchangeCode(ctx context.Context, code, codeVerifier string
 		return nil, err
 	}
 
+	// Extract email from id_token
+	var email string
+	if tokenResp.IDToken != "" {
+		info := ParseJWT(tokenResp.IDToken)
+		email = info.Email
+	}
+
 	td := &TokenData{
 		Provider:     "codex",
 		AccessToken:  tokenResp.AccessToken,
 		RefreshToken: tokenResp.RefreshToken,
+		Email:        email,
 		ExpiresAt:    time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second).Format(time.RFC3339),
-	}
-
-	// Extract plan_type from id_token and seed quota cache
-	if tokenResp.IDToken != "" {
-		if pt := ParseJWTPlanType(tokenResp.IDToken); pt != "" {
-			QuotaCache.Set("codex:"+td.ID, &QuotaInfo{
-				AccountID: td.ID,
-				PlanType:  pt,
-			})
-			fmt.Printf("codex plan: %s\n", pt)
-		}
 	}
 
 	return td, nil
@@ -450,58 +478,100 @@ func (o *CodexOAuth) FetchQuotaWithClient(ctx context.Context, client *http.Clie
 	return info, nil
 }
 
-// FetchAllQuotas fetches quota for all active Codex accounts.
+// FetchAllQuotas fetches quota for all active Codex accounts using a shared warmed client.
 func (o *CodexOAuth) FetchAllQuotas(ctx context.Context) {
 	accounts := o.store.AllForProvider("codex")
+	if len(accounts) == 0 {
+		return
+	}
+
+	// Warm up once with the first active account
+	jar, _ := cookiejar.New(nil)
+	client := &http.Client{Jar: jar, Transport: o.httpClient.Transport}
+
+	var warmupToken string
+	for _, acc := range accounts {
+		if !acc.IsExpired() {
+			warmupToken = acc.AccessToken
+			break
+		}
+	}
+	if warmupToken == "" {
+		return
+	}
+
+	warmupReq, _ := http.NewRequestWithContext(ctx, "GET", codexBaseURL+"/codex/models?client_version=0.135.0", nil)
+	applyCodexHeaders(warmupReq, warmupToken)
+	if resp, err := client.Do(warmupReq); err == nil {
+		io.ReadAll(resp.Body)
+		resp.Body.Close()
+	}
+
+	// Fetch usage for each account using the warmed client
 	for _, acc := range accounts {
 		if acc.IsExpired() {
 			continue
 		}
-
-		jar, _ := cookiejar.New(nil)
-		client := &http.Client{Jar: jar, Transport: o.httpClient.Transport}
-
-		// Warmup with models endpoint
-		warmupReq, _ := http.NewRequestWithContext(ctx, "GET", codexBaseURL+"/codex/models?client_version=0.135.0", nil)
-		warmupReq.Header.Set("Authorization", "Bearer "+acc.AccessToken)
-		warmupReq.Header.Set("Accept", "application/json")
-		warmupReq.Header.Set("User-Agent", codexUA)
-		if warmupResp, err := client.Do(warmupReq); err == nil {
-			io.ReadAll(warmupResp.Body)
-			warmupResp.Body.Close()
-		}
-
-		// Fetch usage
-		usageReq, _ := http.NewRequestWithContext(ctx, "GET", codexBaseURL+"/codex/usage", nil)
-		usageReq.Header.Set("Authorization", "Bearer "+acc.AccessToken)
-		usageReq.Header.Set("Accept", "application/json")
-		usageReq.Header.Set("User-Agent", codexUA)
-
-		resp, err := client.Do(usageReq)
-		if err != nil {
-			continue
-		}
-		body, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		if resp.StatusCode != http.StatusOK {
-			continue
-		}
-
-		// Parse plan_type from JWT
-		planType := ParseJWTPlanType(acc.AccessToken)
-
-		var raw struct {
-			PlanType string `json:"plan_type"`
-		}
-		json.Unmarshal(body, &raw)
-		if raw.PlanType != "" {
-			planType = raw.PlanType
-		}
-
-		info := &QuotaInfo{AccountID: acc.ID, Email: acc.Email, PlanType: planType, FetchedAt: time.Now().Format("01/02 15:04"), HasRealData: true}
-		parseUsageBody(body, info)
-		QuotaCache.Set("codex:"+acc.ID, info)
+		o.fetchQuotaForAccount(ctx, client, acc)
 	}
+}
+
+// FetchQuotaForAccountByID fetches quota for a single account.
+func (o *CodexOAuth) FetchQuotaForAccountByID(ctx context.Context, accountID string) error {
+	acc := o.store.GetByID("codex", accountID)
+	if acc == nil {
+		return fmt.Errorf("account %s not found", accountID)
+	}
+
+	jar, _ := cookiejar.New(nil)
+	client := &http.Client{Jar: jar, Transport: o.httpClient.Transport}
+
+	warmupReq, _ := http.NewRequestWithContext(ctx, "GET", codexBaseURL+"/codex/models?client_version=0.135.0", nil)
+	applyCodexHeaders(warmupReq, acc.AccessToken)
+	if resp, err := client.Do(warmupReq); err == nil {
+		io.ReadAll(resp.Body)
+		resp.Body.Close()
+	}
+
+	o.fetchQuotaForAccount(ctx, client, acc)
+	return nil
+}
+
+func (o *CodexOAuth) fetchQuotaForAccount(ctx context.Context, client *http.Client, acc *TokenData) {
+	jwtInfo := ParseJWT(acc.AccessToken)
+	email := acc.Email
+	if email == "" {
+		email = jwtInfo.Email
+	}
+	planType := jwtInfo.PlanType
+
+	usageReq, _ := http.NewRequestWithContext(ctx, "GET", codexBaseURL+"/codex/usage", nil)
+	applyCodexHeaders(usageReq, acc.AccessToken)
+
+	resp, err := client.Do(usageReq)
+	if err != nil {
+		// Seed with JWT info even if usage fails
+		QuotaCache.Set("codex:"+acc.ID, &QuotaInfo{AccountID: acc.ID, Email: email, PlanType: planType, HasRealData: false})
+		return
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		QuotaCache.Set("codex:"+acc.ID, &QuotaInfo{AccountID: acc.ID, Email: email, PlanType: planType, HasRealData: false})
+		return
+	}
+
+	var raw struct{ PlanType string `json:"plan_type"` }
+	json.Unmarshal(body, &raw)
+	if raw.PlanType != "" {
+		planType = raw.PlanType
+	}
+
+	info := &QuotaInfo{AccountID: acc.ID, Email: email, PlanType: planType, FetchedAt: time.Now().Format("01/02 15:04"), HasRealData: true}
+	parseUsageBody(body, info)
+	QuotaCache.Set("codex:"+acc.ID, info)
+	fmt.Printf("  quota %s: %s remaining=%v\n", acc.ID[:min(20, len(acc.ID))], planType, info.Primary)
 }
 
 func parseUsageBody(body []byte, info *QuotaInfo) {

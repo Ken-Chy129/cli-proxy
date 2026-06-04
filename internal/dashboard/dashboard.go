@@ -306,7 +306,8 @@ async function loadStatus(){
       } else {
         rows='<div style="font-size:12px;color:var(--text-2);padding:4px 0">Awaiting data (send a request to update)</div>';
       }
-      return '<div class="quota-card"><div class="quota-card-header"><span class="model-tag" style="background:var(--accent-dim);color:var(--text-0)">Codex</span><span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+displayName+'</span></div><div style="margin-bottom:8px"><span class="plan-badge '+planCls+'">'+planLabel+'</span></div>'+rows+'</div>';
+      const refreshBtn='<button class="btn-delete" style="font-size:11px;color:var(--accent)" onclick="refreshQuota(\''+q.account_id+'\')">&#8635;</button>';
+      return '<div class="quota-card"><div class="quota-card-header"><span class="model-tag" style="background:var(--accent-dim);color:var(--text-0)">Codex</span><span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+displayName+'</span>'+refreshBtn+'</div><div style="margin-bottom:8px"><span class="plan-badge '+planCls+'">'+planLabel+'</span></div>'+rows+'</div>';
     }).join('');
   } else {
     qSection.style.display='none';
@@ -394,6 +395,11 @@ function switchTab(name,el){
   if(name==='logs')loadLogs();
   if(name==='stats')loadStats('7d');
   if(name==='config')loadConfig();
+}
+
+async function refreshQuota(accountId){
+  await fetch('/api/refresh-quota/codex/'+encodeURIComponent(accountId),{method:'POST'});
+  loadStatus();
 }
 
 async function syncModels(){

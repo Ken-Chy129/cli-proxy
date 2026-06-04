@@ -39,6 +39,7 @@ func Run(cfg *config.Config, r *router.Router, tokenStore *auth.TokenStore, stat
 	engine.GET("/api/stats", adminHandler.Stats)
 	engine.GET("/api/config", adminHandler.Config)
 	engine.POST("/api/sync-models", adminHandler.SyncModels)
+	engine.POST("/api/refresh-quota/:provider/:id", adminHandler.RefreshQuota)
 	engine.DELETE("/api/accounts/:provider/:id", adminHandler.DeleteAccount)
 
 	if claudeOAuth != nil {

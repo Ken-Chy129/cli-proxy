@@ -208,6 +208,21 @@ func (h *AdminHandler) SyncModels(c *gin.Context) {
 	c.JSON(http.StatusOK, results)
 }
 
+func (h *AdminHandler) RefreshQuota(c *gin.Context) {
+	provider := c.Param("provider")
+	id := c.Param("id")
+	if provider == "codex" && h.codexOAuth != nil {
+		if err := h.codexOAuth.FetchQuotaForAccountByID(c.Request.Context(), id); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		q := auth.QuotaCache.Get("codex:" + id)
+		c.JSON(http.StatusOK, gin.H{"ok": true, "quota": q})
+		return
+	}
+	c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported provider"})
+}
+
 func (h *AdminHandler) DeleteAccount(c *gin.Context) {
 	provider := c.Param("provider")
 	id := c.Param("id")

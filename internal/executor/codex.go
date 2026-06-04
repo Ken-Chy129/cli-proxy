@@ -261,9 +261,13 @@ func (e *CodexExecutor) doStream(ctx context.Context, req *types.ChatCompletionR
 
 	// Extract quota from response headers and store per-account
 	if quota := auth.ParseCodexRateLimitHeaders(resp.Header); quota != nil {
+		jwtInfo := auth.ParseJWT(tokenData.AccessToken)
 		quota.AccountID = tokenData.ID
 		quota.Email = tokenData.Email
-		quota.PlanType = auth.ParseJWTPlanType(tokenData.AccessToken)
+		if quota.Email == "" {
+			quota.Email = jwtInfo.Email
+		}
+		quota.PlanType = jwtInfo.PlanType
 		auth.QuotaCache.Set("codex:"+tokenData.ID, quota)
 	}
 

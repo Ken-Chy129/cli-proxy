@@ -65,20 +65,9 @@ func main() {
 		// Try dynamic fetch if already authenticated
 		if tokenStore.ActiveCount("codex") > 0 {
 			syncCodexModels(codexOAuth, codexExec, r)
-			// Seed plan_type from JWT for each account (real quota data comes after first API request)
-			for _, t := range tokenStore.AllForProvider("codex") {
-				pt := auth.ParseJWTPlanType(t.AccessToken)
-				if pt == "" {
-					pt = "unknown"
-				}
-				auth.QuotaCache.Set("codex:"+t.ID, &auth.QuotaInfo{
-					AccountID:   t.ID,
-					Email:       t.Email,
-					PlanType:    pt,
-					HasRealData: false,
-				})
-			}
-			log.Printf("seeded %d codex account quotas from JWT", len(tokenStore.AllForProvider("codex")))
+			// Fetch quota for all accounts (warmup + /codex/usage)
+			log.Printf("fetching codex quotas for %d accounts...", len(tokenStore.AllForProvider("codex")))
+			codexOAuth.FetchAllQuotas(context.Background())
 		}
 	}
 

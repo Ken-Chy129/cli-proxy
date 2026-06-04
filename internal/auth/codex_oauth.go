@@ -560,7 +560,9 @@ func (o *CodexOAuth) fetchQuotaForAccount(ctx context.Context, client *http.Clie
 
 	resp, err := client.Do(usageReq)
 	if err != nil {
-		// Seed with JWT info even if usage fails
+		if existing := QuotaCache.Get("codex:" + acc.ID); existing != nil && existing.HasRealData {
+			return
+		}
 		QuotaCache.Set("codex:"+acc.ID, &QuotaInfo{AccountID: acc.ID, Email: email, PlanType: planType, HasRealData: false})
 		return
 	}
@@ -568,6 +570,10 @@ func (o *CodexOAuth) fetchQuotaForAccount(ctx context.Context, client *http.Clie
 	resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		// Don't overwrite existing good data with failed fetch
+		if existing := QuotaCache.Get("codex:" + acc.ID); existing != nil && existing.HasRealData {
+			return
+		}
 		QuotaCache.Set("codex:"+acc.ID, &QuotaInfo{AccountID: acc.ID, Email: email, PlanType: planType, HasRealData: false})
 		return
 	}

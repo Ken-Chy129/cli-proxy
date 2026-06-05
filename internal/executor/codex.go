@@ -78,6 +78,8 @@ func (e *CodexExecutor) toCodexRequest(req *types.ChatCompletionRequest) *codexR
 	}
 	if len(systemParts) > 0 {
 		cr.Instructions = strings.Join(systemParts, "\n\n")
+	} else {
+		cr.Instructions = "You are a helpful assistant."
 	}
 
 	for _, msg := range req.Messages {

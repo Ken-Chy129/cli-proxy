@@ -24,29 +24,32 @@ func Run(cfg *config.Config, r *router.Router, tokenStore *auth.TokenStore, stat
 
 	chatHandler := handler.NewChatHandler(r, statsDB)
 	adminHandler := handler.NewAdminHandler(cfg, r, tokenStore, statsDB, codexOAuth)
-
-	engine.GET("/", dashboard.Handler())
-
-	api := engine.Group("/")
-	if cfg.Server.APIKey != "" {
-		api.Use(APIKeyAuth(cfg.Server.APIKey))
-	}
 	imagesHandler := handler.NewImagesHandler(r, statsDB)
 
+	authMW := APIKeyAuth(cfg.Server.APIKey)
+
+	// Dashboard (protected)
+	engine.GET("/", authMW, dashboard.Handler())
+
+	// API routes (protected)
+	api := engine.Group("/", authMW)
 	api.POST("/v1/chat/completions", chatHandler.ChatCompletions)
 	api.POST("/v1/images/generations", imagesHandler.ImagesGenerations)
 	api.GET("/v1/models", chatHandler.ListModels)
 
-	engine.GET("/api/status", adminHandler.Status)
-	engine.GET("/api/logs", adminHandler.Logs)
-	engine.GET("/api/stats", adminHandler.Stats)
-	engine.GET("/api/config", adminHandler.Config)
-	engine.POST("/api/sync-models", adminHandler.SyncModels)
-	engine.POST("/api/refresh-quota/:provider/:id", adminHandler.RefreshQuota)
-	engine.DELETE("/api/accounts/:provider/:id", adminHandler.DeleteAccount)
+	// Admin API (protected)
+	admin := engine.Group("/api", authMW)
+	admin.GET("/status", adminHandler.Status)
+	admin.GET("/logs", adminHandler.Logs)
+	admin.GET("/stats", adminHandler.Stats)
+	admin.GET("/config", adminHandler.Config)
+	admin.POST("/sync-models", adminHandler.SyncModels)
+	admin.POST("/refresh-quota/:provider/:id", adminHandler.RefreshQuota)
+	admin.DELETE("/accounts/:provider/:id", adminHandler.DeleteAccount)
 
+	// OAuth login (protected)
 	if claudeOAuth != nil {
-		engine.GET("/auth/claude", func(c *gin.Context) {
+		engine.GET("/auth/claude", authMW, func(c *gin.Context) {
 			authURL, err := claudeOAuth.StartLogin()
 			if err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -56,7 +59,7 @@ func Run(cfg *config.Config, r *router.Router, tokenStore *auth.TokenStore, stat
 		})
 	}
 	if codexOAuth != nil {
-		engine.GET("/auth/codex", func(c *gin.Context) {
+		engine.GET("/auth/codex", authMW, func(c *gin.Context) {
 			authURL, err := codexOAuth.StartLogin()
 			if err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -66,18 +69,17 @@ func Run(cfg *config.Config, r *router.Router, tokenStore *auth.TokenStore, stat
 		})
 	}
 
+	// Health check (public, no auth)
 	engine.GET("/health", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"status": "ok", "models": r.AllModels()})
+		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
 
 	addr := fmt.Sprintf(":%d", cfg.Server.Port)
 	fmt.Printf("models: %v\n", r.AllModels())
 	if cfg.Server.CertFile != "" && cfg.Server.KeyFile != "" {
 		fmt.Printf("cli-proxy listening on %s (HTTPS)\n", addr)
-		fmt.Printf("dashboard: https://localhost:%d/\n", cfg.Server.Port)
 		return engine.RunTLS(addr, cfg.Server.CertFile, cfg.Server.KeyFile)
 	}
 	fmt.Printf("cli-proxy listening on %s\n", addr)
-	fmt.Printf("dashboard: http://localhost:%d/\n", cfg.Server.Port)
 	return engine.Run(addr)
 }

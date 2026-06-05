@@ -254,8 +254,22 @@ const dashboardHTML = `<!DOCTYPE html>
 <script>
 let logPage=0;const logLimit=30;
 
+// API key from URL ?key=xxx or localStorage
+const urlKey=new URLSearchParams(window.location.search).get('key');
+if(urlKey)localStorage.setItem('cli-proxy-key',urlKey);
+const apiKey=localStorage.getItem('cli-proxy-key')||'';
+const authHeaders={'Authorization':'Bearer '+apiKey};
+
+function apiFetch(url,opts){
+  opts=opts||{};
+  opts.headers=Object.assign({},opts.headers||{},authHeaders);
+  return fetch(url,opts);
+}
+
 async function loadStatus(){
-  const r=await fetch('/api/status');const d=await r.json();
+  const r=await apiFetch('/api/status');
+  if(r.status===401){document.body.innerHTML='<div style="display:flex;align-items:center;justify-content:center;height:100vh;color:var(--text-2)"><div style="text-align:center"><h2>Authentication Required</h2><p>Add ?key=YOUR_API_KEY to the URL</p></div></div>';return;}
+  const d=await r.json();
   document.getElementById('total-requests').textContent=(d.total_requests||0).toLocaleString();
   document.getElementById('total-tokens').textContent=(d.total_tokens||0).toLocaleString();
 
@@ -332,7 +346,7 @@ async function sendChat(){
   if(!input)return;
   const output=document.getElementById('chat-output');
   output.textContent='';
-  const resp=await fetch('/v1/chat/completions',{
+  const resp=await apiFetch('/v1/chat/completions',{
     method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({model,messages:[{role:'user',content:input}],stream:true})
   });
@@ -352,7 +366,7 @@ async function sendChat(){
 function clearChat(){document.getElementById('chat-output').textContent='';document.getElementById('chat-input').value='';}
 
 async function loadLogs(){
-  const r=await fetch('/api/logs?limit='+logLimit+'&offset='+(logPage*logLimit));const d=await r.json();
+  const r=await apiFetch('/api/logs?limit='+logLimit+'&offset='+(logPage*logLimit));const d=await r.json();
   document.getElementById('log-total').textContent=d.total;
   document.getElementById('page-info').textContent=(logPage+1)+' / '+Math.max(1,Math.ceil(d.total/logLimit));
   document.getElementById('log-body').innerHTML=(d.logs||[]).map(l=>{
@@ -369,7 +383,7 @@ function nextPage(){logPage++;loadLogs();}
 
 async function loadStats(range,btn){
   if(btn){document.querySelectorAll('.stats-btn').forEach(b=>b.classList.remove('active'));btn.classList.add('active');}
-  const r=await fetch('/api/stats?range='+(range||'7d'));const d=await r.json();
+  const r=await apiFetch('/api/stats?range='+(range||'7d'));const d=await r.json();
   const empty='<tr><td colspan="5" class="text-muted" style="text-align:center;padding:20px">No data</td></tr>';
   document.getElementById('stats-model-body').innerHTML=(d.by_model||[]).map(s=>
     '<tr><td class="text-mono">'+s.model+'</td><td>'+s.request_count+'</td><td>'
@@ -384,7 +398,7 @@ async function loadStats(range,btn){
 }
 
 async function loadConfig(){
-  const r=await fetch('/api/config');const d=await r.json();
+  const r=await apiFetch('/api/config');const d=await r.json();
   document.getElementById('config-display').textContent=JSON.stringify(d,null,2);
 }
 
@@ -402,7 +416,7 @@ async function refreshQuota(accountId){
   const card=document.querySelector('[data-account="'+accountId+'"]');
   if(card)card.style.opacity='0.5';
   try{
-    await fetch('/api/refresh-quota/codex/'+encodeURIComponent(accountId),{method:'POST'});
+    await apiFetch('/api/refresh-quota/codex/'+encodeURIComponent(accountId),{method:'POST'});
   }finally{
     if(card)card.style.opacity='1';
     loadStatus();
@@ -410,13 +424,13 @@ async function refreshQuota(accountId){
 }
 
 async function syncModels(){
-  await fetch('/api/sync-models',{method:'POST'});
+  await apiFetch('/api/sync-models',{method:'POST'});
   loadStatus();
 }
 
 async function removeAccount(provider,id){
   if(!confirm('Remove '+id+'?'))return;
-  await fetch('/api/accounts/'+provider+'/'+encodeURIComponent(id),{method:'DELETE'});
+  await apiFetch('/api/accounts/'+provider+'/'+encodeURIComponent(id),{method:'DELETE'});
   loadStatus();
 }
 

@@ -3,12 +3,15 @@ package server
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"log"
 	"net/http"
 	"strings"
 	"sync"
 
 	"github.com/gin-gonic/gin"
 )
+
+func min(a, b int) int { if a < b { return a }; return b }
 
 var sessions = &sessionStore{tokens: make(map[string]bool)}
 
@@ -52,6 +55,7 @@ func APIKeyAuth(apiKey string) gin.HandlerFunc {
 			c.Next()
 			return
 		}
+		log.Printf("AUTH REJECTED: path=%s auth_header=%q token_len=%d expected_len=%d", c.Request.URL.Path, auth[:min(20, len(auth))], len(token), len(apiKey))
 		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
 			"error": gin.H{"message": "invalid api key", "type": "invalid_request_error"},
 		})

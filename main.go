@@ -65,8 +65,9 @@ func main() {
 		codexExec = executor.NewCodexExecutor(codexOAuth, models)
 		r.Register(codexExec, "codex")
 
-		// Try dynamic fetch if already authenticated
-		if tokenStore.ActiveCount("codex") > 0 {
+		// Refresh all tokens at startup, then fetch models
+		if len(tokenStore.AllForProvider("codex")) > 0 {
+			codexOAuth.RefreshAllTokens(context.Background())
 			syncCodexModels(codexOAuth, codexExec, r)
 			// Fetch quota for all accounts (warmup + /codex/usage)
 			log.Printf("fetching codex quotas for %d accounts...", len(tokenStore.AllForProvider("codex")))

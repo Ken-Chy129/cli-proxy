@@ -118,14 +118,35 @@ func (o *CodexOAuth) GetToken(ctx context.Context) (string, error) {
 	return o.refresh(ctx, token)
 }
 
+// ForceRefresh refreshes the token for a specific account regardless of expiry.
+func (o *CodexOAuth) ForceRefresh(ctx context.Context, accountID string) error {
+	token := o.store.GetByID("codex", accountID)
+	if token == nil {
+		return fmt.Errorf("account %s not found", accountID)
+	}
+	_, err := o.refresh(ctx, token)
+	return err
+}
+
+// RefreshAllTokens refreshes all Codex tokens at startup.
+func (o *CodexOAuth) RefreshAllTokens(ctx context.Context) {
+	accounts := o.store.AllForProvider("codex")
+	for _, acc := range accounts {
+		if acc.RefreshToken == "" {
+			continue
+		}
+		_, err := o.refresh(ctx, acc)
+		if err != nil {
+			fmt.Printf("refresh %s failed: %v\n", acc.ID, err)
+		} else {
+			fmt.Printf("refreshed token for %s\n", acc.ID)
+		}
+	}
+}
+
 func (o *CodexOAuth) refresh(ctx context.Context, token *TokenData) (string, error) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-
-	current := o.store.GetByID("codex", token.ID)
-	if current != nil && !current.IsExpired() {
-		return current.AccessToken, nil
-	}
 
 	if token.RefreshToken == "" {
 		return "", fmt.Errorf("no refresh token for %s, re-login required", token.ID)

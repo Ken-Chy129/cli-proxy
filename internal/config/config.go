@@ -15,8 +15,10 @@ type Config struct {
 }
 
 type ServerConfig struct {
-	Port   int    `yaml:"port"`
-	APIKey string `yaml:"api_key"`
+	Port     int    `yaml:"port"`
+	APIKey   string `yaml:"api_key"`
+	CertFile string `yaml:"cert_file"`
+	KeyFile  string `yaml:"key_file"`
 }
 
 type VertexConfig struct {

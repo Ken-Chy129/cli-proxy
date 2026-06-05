@@ -71,8 +71,13 @@ func Run(cfg *config.Config, r *router.Router, tokenStore *auth.TokenStore, stat
 	})
 
 	addr := fmt.Sprintf(":%d", cfg.Server.Port)
+	fmt.Printf("models: %v\n", r.AllModels())
+	if cfg.Server.CertFile != "" && cfg.Server.KeyFile != "" {
+		fmt.Printf("cli-proxy listening on %s (HTTPS)\n", addr)
+		fmt.Printf("dashboard: https://localhost:%d/\n", cfg.Server.Port)
+		return engine.RunTLS(addr, cfg.Server.CertFile, cfg.Server.KeyFile)
+	}
 	fmt.Printf("cli-proxy listening on %s\n", addr)
 	fmt.Printf("dashboard: http://localhost:%d/\n", cfg.Server.Port)
-	fmt.Printf("models: %v\n", r.AllModels())
 	return engine.Run(addr)
 }

@@ -99,6 +99,10 @@ const dashboardHTML = `<!DOCTYPE html>
   .chat-input::placeholder { color:var(--text-2); }
   .chat-output { padding:12px; min-height:100px; max-height:400px; overflow-y:auto; font-size:13px; line-height:1.6; white-space:pre-wrap; word-break:break-word; color:var(--text-1); font-family:'SF Mono',Menlo,Consolas,monospace; }
   .chat-output:empty::before { content:'Response will appear here...'; color:var(--text-2); font-style:italic; font-family:inherit; }
+  .chat-output.loading::before { content:''; }
+  .chat-output.loading::after { content:'Thinking...'; color:var(--accent); animation:pulse 1.2s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+  .btn:disabled { opacity:0.5; cursor:not-allowed; }
 
   /* Tables */
   .panel { background:var(--bg-1); border:1px solid var(--border); border-radius:8px; overflow:hidden; }
@@ -335,22 +339,29 @@ async function sendChat(){
   const input=document.getElementById('chat-input').value.trim();
   if(!input)return;
   const output=document.getElementById('chat-output');
+  const sendBtn=document.querySelector('.btn-primary');
   output.textContent='';
-  const resp=await apiFetch('/v1/chat/completions',{
-    method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({model,messages:[{role:'user',content:input}],stream:true})
-  });
-  const reader=resp.body.getReader();const dec=new TextDecoder();let buf='';
-  while(true){
-    const{done,value}=await reader.read();if(done)break;
-    buf+=dec.decode(value,{stream:true});
-    const lines=buf.split('\n');buf=lines.pop();
-    for(const line of lines){
-      if(!line.startsWith('data: ')||line==='data: [DONE]')continue;
-      try{const c=JSON.parse(line.slice(6));const t=c.choices?.[0]?.delta?.content;if(t)output.textContent+=t;}catch{}
+  output.classList.add('loading');
+  sendBtn.disabled=true;sendBtn.textContent='Sending...';
+  try{
+    const resp=await apiFetch('/v1/chat/completions',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({model,messages:[{role:'user',content:input}],stream:true})
+    });
+    if(!resp.ok){const e=await resp.json();output.classList.remove('loading');output.textContent='Error: '+(e.error?.message||resp.statusText);return;}
+    output.classList.remove('loading');
+    const reader=resp.body.getReader();const dec=new TextDecoder();let buf='';
+    while(true){
+      const{done,value}=await reader.read();if(done)break;
+      buf+=dec.decode(value,{stream:true});
+      const lines=buf.split('\n');buf=lines.pop();
+      for(const line of lines){
+        if(!line.startsWith('data: ')||line==='data: [DONE]')continue;
+        try{const c=JSON.parse(line.slice(6));const t=c.choices?.[0]?.delta?.content;if(t)output.textContent+=t;}catch{}
+      }
     }
-  }
-  loadLogs();loadStatus();
+  }catch(e){output.classList.remove('loading');output.textContent='Error: '+e.message;}
+  finally{sendBtn.disabled=false;sendBtn.textContent='Send';loadStatus();}
 }
 
 function clearChat(){document.getElementById('chat-output').textContent='';document.getElementById('chat-input').value='';}

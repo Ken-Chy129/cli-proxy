@@ -271,20 +271,20 @@ const dashboardHTML = `<!DOCTYPE html>
 <div class="modal-overlay" id="add-account-modal">
   <div class="modal">
     <h3 id="modal-title">Add Codex Account</h3>
-    <div class="steps">
-      <b>Step 1:</b> Click the link below to open OpenAI login (opens in new tab)<br>
-      <b>Step 2:</b> Complete authorization in the browser<br>
-      <b>Step 3:</b> Copy the callback URL from the browser address bar (the page will show "unable to connect")<br>
-      <b>Step 4:</b> Paste the callback URL below and click Submit
+    <div id="modal-step1" style="text-align:center;padding:8px 0">
+      <p style="color:var(--text-2);font-size:13px;margin-bottom:16px">Click below to open authorization page, then paste the callback URL after login</p>
+      <a id="modal-auth-link" href="#" target="_blank" class="btn btn-primary" style="display:inline-block;text-decoration:none;padding:10px 32px" onclick="setTimeout(function(){document.getElementById('modal-step1').style.display='none';document.getElementById('modal-step2').style.display='';},500)">Authorize Login</a>
     </div>
-    <div class="auth-url" id="modal-auth-url" onclick="navigator.clipboard.writeText(this.textContent)"></div>
-    <a id="modal-auth-link" href="#" target="_blank" class="btn btn-primary" style="display:inline-block;text-align:center;margin-bottom:12px;text-decoration:none;width:100%">Open Login Page</a>
-    <textarea id="modal-callback-url" placeholder="Paste the callback URL here (starts with http://localhost:1455/auth/callback?code=...)"></textarea>
-    <div id="modal-error" style="color:var(--red);font-size:12px;margin-top:4px"></div>
+    <div id="modal-step2" style="display:none">
+      <p style="color:var(--text-2);font-size:13px;margin-bottom:8px">After login, the browser will show "unable to connect". Copy the <b style="color:var(--text-0)">full URL</b> from the address bar and paste below:</p>
+      <textarea id="modal-callback-url" placeholder="http://localhost:1455/auth/callback?code=..." style="margin-bottom:4px"></textarea>
+      <div id="modal-error" style="color:var(--red);font-size:12px;min-height:16px"></div>
+    </div>
     <div class="modal-actions">
       <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
       <button class="btn btn-primary" id="modal-submit" onclick="submitCallbackURL()">Submit</button>
     </div>
+    <div class="auth-url" id="modal-auth-url" style="display:none"></div>
   </div>
 </div>
 
@@ -452,6 +452,8 @@ async function openAddAccount(provider){
   document.getElementById('modal-title').textContent='Add '+provider.charAt(0).toUpperCase()+provider.slice(1)+' Account';
   document.getElementById('modal-callback-url').value='';
   document.getElementById('modal-error').textContent='';
+  document.getElementById('modal-step1').style.display='';
+  document.getElementById('modal-step2').style.display='none';
   // Get auth URL from server
   const r=await apiFetch('/auth/'+provider+'?json=1');
   const d=await r.json();

@@ -270,15 +270,26 @@ const dashboardHTML = `<!DOCTYPE html>
 <!-- Add Account Modal -->
 <div class="modal-overlay" id="add-account-modal">
   <div class="modal">
-    <h3 id="modal-title">Add Codex Account</h3>
-    <div id="modal-step1" style="text-align:center;padding:8px 0">
-      <p style="color:var(--text-2);font-size:13px;margin-bottom:16px">Click below to open authorization page, then paste the callback URL after login</p>
-      <a id="modal-auth-link" href="#" target="_blank" class="btn btn-primary" style="display:inline-block;text-decoration:none;padding:10px 32px" onclick="setTimeout(function(){document.getElementById('modal-step1').style.display='none';document.getElementById('modal-step2').style.display='';},500)">Authorize Login</a>
+    <h3 id="modal-title" style="margin-bottom:20px">Add Codex Account</h3>
+    <div id="modal-step1">
+      <div style="display:flex;align-items:flex-start;gap:12px;margin-bottom:16px">
+        <span style="background:var(--accent);color:#fff;width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;flex-shrink:0">1</span>
+        <div style="flex:1">
+          <div style="font-size:13px;color:var(--text-0);margin-bottom:10px">Open authorization page and complete login</div>
+          <a id="modal-auth-link" href="#" target="_blank" class="btn btn-primary" style="display:inline-block;text-decoration:none;font-size:12px;padding:6px 20px" onclick="setTimeout(function(){document.getElementById('modal-step1').style.display='none';document.getElementById('modal-step2').style.display='';},500)">Open Login Page &rarr;</a>
+        </div>
+      </div>
     </div>
     <div id="modal-step2" style="display:none">
-      <p style="color:var(--text-2);font-size:13px;margin-bottom:8px">After login, the browser will show "unable to connect". Copy the <b style="color:var(--text-0)">full URL</b> from the address bar and paste below:</p>
-      <textarea id="modal-callback-url" placeholder="http://localhost:1455/auth/callback?code=..." style="margin-bottom:4px"></textarea>
-      <div id="modal-error" style="color:var(--red);font-size:12px;min-height:16px"></div>
+      <div style="display:flex;align-items:flex-start;gap:12px">
+        <span style="background:var(--accent);color:#fff;width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;flex-shrink:0">2</span>
+        <div style="flex:1">
+          <div style="font-size:13px;color:var(--text-0);margin-bottom:4px">Paste the callback URL</div>
+          <div style="font-size:11px;color:var(--text-2);margin-bottom:8px">Login will redirect to a page that can't load — copy the URL from the address bar</div>
+          <textarea id="modal-callback-url" placeholder="http://localhost:1455/auth/callback?code=..."></textarea>
+          <div id="modal-error" style="color:var(--red);font-size:12px;min-height:16px;margin-top:2px"></div>
+        </div>
+      </div>
     </div>
     <div class="modal-actions">
       <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>

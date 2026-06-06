@@ -1,9 +1,14 @@
 #!/bin/bash
 # Deploy cli-proxy to remote server
-# Usage: ./deploy.sh [server_ip] [password]
+# Usage: ./deploy.sh [server_ip]
+# Set DEPLOY_PASSWORD env var or enter interactively
 
 SERVER=${1:-YOUR_SERVER_IP}
-PASSWORD=${2:-'REDACTED'}
+
+if [ -z "$DEPLOY_PASSWORD" ]; then
+    read -sp "SSH password for root@$SERVER: " DEPLOY_PASSWORD
+    echo
+fi
 
 set -e
 
@@ -12,7 +17,7 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o cli-proxy-linux .
 echo "Built: $(du -h cli-proxy-linux | cut -f1)"
 
 echo "=== Stopping remote service ==="
-export SSHPASS="$PASSWORD"
+export SSHPASS="$DEPLOY_PASSWORD"
 sshpass -e ssh -o StrictHostKeyChecking=no root@$SERVER "pkill -9 -f cli-proxy; sleep 1; rm -f ~/cli-proxy/cli-proxy" 2>/dev/null || true
 
 echo "=== Uploading binary ==="

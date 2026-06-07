@@ -2,18 +2,19 @@
 
 **简体中文** | [English](README_EN.md)
 
-个人 AI API 代理服务，将 Claude（Vertex AI / OAuth）和 OpenAI Codex（OAuth）统一暴露为 OpenAI 兼容 API。
+个人 AI API 代理服务，将 Claude（Vertex AI / OAuth）和 OpenAI Codex（OAuth）统一暴露为多种兼容 API。
 
 ## 功能特性
 
 - **OpenAI 兼容 API** — 支持 `/v1/chat/completions`、`/v1/responses`、`/v1/images/generations`、`/v1/models`
+- **Anthropic Messages API** — 支持 `/v1/messages`，原生透传至 Vertex AI / Claude OAuth，可直接接入 Claude Code
 - **多后端支持** — Claude（Vertex AI）、Claude（OAuth）、Codex（OAuth）
 - **多账号池** — 请求在多个账号间轮转，独立追踪每个账号的配额
 - **动态模型发现** — 启动时自动从 Codex 后端拉取可用模型列表
 - **管理仪表板** — 状态概览、配额展示、测试对话、请求日志、用量统计
 - **持久化日志** — SQLite 存储请求记录，支持聚合查询
 - **HTTPS** — 内置 TLS 支持
-- **登录认证** — 仪表板使用用户名密码登录，API 调用使用 Bearer Token
+- **登录认证** — 仪表板使用用户名密码登录，API 调用支持 Bearer Token 和 `x-api-key`
 
 ## 支持的模型
 
@@ -100,7 +101,33 @@ curl https://your-domain/v1/images/generations \
   -d '{"model":"gpt-image-2","prompt":"一只戴墨镜的猫","size":"1024x1024"}'
 ```
 
+### 接入 Claude Code
+
+```bash
+export ANTHROPIC_BASE_URL="https://your-domain"
+export ANTHROPIC_API_KEY="sk-your-api-key"
+claude
+```
+
+请求直接透传至 Vertex AI / Claude OAuth 后端，thinking blocks、prompt caching、tool use 等 Claude Code 特性完整保留。
+
 ### 接入 Codex CLI
+
+在 `~/.codex/config.toml` 中配置：
+
+```toml
+model_provider = "cli-proxy"
+model = "gpt-5.5"
+
+[model_providers.cli-proxy]
+name = "CLI Proxy"
+base_url = "https://your-domain/v1"
+env_key = "CLI_PROXY_API_KEY"
+wire_api = "responses"
+supports_websockets = false
+```
+
+或直接使用环境变量：
 
 ```bash
 export OPENAI_BASE_URL="https://your-domain/v1"
@@ -184,6 +211,7 @@ scp ~/.config/gcloud/application_default_credentials.json root@server:~/.config/
 ```
 客户端请求
   │
+  ├─ /v1/messages          ─→ Router ─→ 原生透传 ─→ Vertex AI / api.anthropic.com
   ├─ /v1/chat/completions  ─→ Router ─→ Executor ─→ 后端 API
   ├─ /v1/responses         ─→ Codex 直通 ─────────→ chatgpt.com
   ├─ /v1/images/generations ─→ Codex Tool Call ────→ chatgpt.com
@@ -193,6 +221,10 @@ Executor（执行器）：
   VertexExecutor      → OpenAI 格式 ↔ Anthropic Messages API ↔ GCP Vertex AI
   ClaudeOAuthExecutor → OpenAI 格式 ↔ Anthropic Messages API ↔ api.anthropic.com
   CodexExecutor       → OpenAI 格式 ↔ Codex Responses API   ↔ chatgpt.com
+
+Anthropic 透传（/v1/messages）：
+  VertexExecutor      → 请求体原样转发（移除 model 字段）    → GCP Vertex AI
+  ClaudeOAuthExecutor → 请求体原样转发                      → api.anthropic.com
 ```
 
 ## 技术栈

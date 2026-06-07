@@ -2,18 +2,19 @@
 
 [简体中文](README.md) | **English**
 
-Personal AI API proxy that exposes Claude (Vertex AI / OAuth) and OpenAI Codex (OAuth) as a unified OpenAI-compatible API.
+Personal AI API proxy that exposes Claude (Vertex AI / OAuth) and OpenAI Codex (OAuth) as multiple compatible APIs.
 
 ## Features
 
 - **OpenAI-compatible API** — `/v1/chat/completions`, `/v1/responses`, `/v1/images/generations`, `/v1/models`
+- **Anthropic Messages API** — `/v1/messages` with raw passthrough to Vertex AI / Claude OAuth, enabling direct Claude Code integration
 - **Multiple backends** — Claude via Vertex AI, Claude via OAuth, Codex via OAuth
 - **Multi-account pool** — Round-robin rotation across accounts with per-account quota tracking
 - **Dynamic model discovery** — Auto-fetch available models from Codex backend on startup
 - **Web dashboard** — Status overview, quota display, test chat, request logs, usage stats
 - **SQLite logging** — Persistent request logs with aggregation queries
 - **HTTPS** — Built-in TLS support
-- **Login auth** — Username/password session for dashboard, Bearer token for API
+- **Login auth** — Username/password session for dashboard, Bearer token and `x-api-key` for API
 
 ## Supported Models
 
@@ -100,7 +101,33 @@ curl https://your-domain/v1/images/generations \
   -d '{"model":"gpt-image-2","prompt":"A cat wearing sunglasses","size":"1024x1024"}'
 ```
 
-### Responses API (Codex CLI)
+### Claude Code
+
+```bash
+export ANTHROPIC_BASE_URL="https://your-domain"
+export ANTHROPIC_API_KEY="sk-your-api-key"
+claude
+```
+
+Requests are passed through directly to Vertex AI / Claude OAuth backends, preserving all Claude Code features (thinking blocks, prompt caching, tool use, etc.).
+
+### Codex CLI
+
+Add to `~/.codex/config.toml`:
+
+```toml
+model_provider = "cli-proxy"
+model = "gpt-5.5"
+
+[model_providers.cli-proxy]
+name = "CLI Proxy"
+base_url = "https://your-domain/v1"
+env_key = "CLI_PROXY_API_KEY"
+wire_api = "responses"
+supports_websockets = false
+```
+
+Or use environment variables:
 
 ```bash
 export OPENAI_BASE_URL="https://your-domain/v1"
@@ -180,15 +207,20 @@ scp ~/.config/gcloud/application_default_credentials.json root@server:~/.config/
 ```
 Client Request
      │
-     ├─ /v1/chat/completions ─→ Router ─→ Executor ─→ Backend API
-     ├─ /v1/responses        ─→ Codex passthrough ──→ chatgpt.com
-     ├─ /v1/images/generations→ Codex tool call ────→ chatgpt.com
-     └─ /v1/models           ─→ List all registered models
-     
+     ├─ /v1/messages          ─→ Router ─→ Raw passthrough ─→ Vertex AI / api.anthropic.com
+     ├─ /v1/chat/completions  ─→ Router ─→ Executor ────────→ Backend API
+     ├─ /v1/responses         ─→ Codex passthrough ─────────→ chatgpt.com
+     ├─ /v1/images/generations─→ Codex tool call ───────────→ chatgpt.com
+     └─ /v1/models            ─→ List all registered models
+
 Executors:
   VertexExecutor     → OpenAI format ↔ Anthropic Messages API ↔ GCP Vertex AI
   ClaudeOAuthExecutor→ OpenAI format ↔ Anthropic Messages API ↔ api.anthropic.com
   CodexExecutor      → OpenAI format ↔ Codex Responses API   ↔ chatgpt.com
+
+Anthropic passthrough (/v1/messages):
+  VertexExecutor     → Raw body forwarded (model field stripped) → GCP Vertex AI
+  ClaudeOAuthExecutor→ Raw body forwarded                       → api.anthropic.com
 ```
 
 ## Tech Stack

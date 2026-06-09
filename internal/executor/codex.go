@@ -225,8 +225,10 @@ func (e *CodexExecutor) Execute(ctx context.Context, req *types.ChatCompletionRe
 	}, nil
 }
 
-func (e *CodexExecutor) ExecuteStream(ctx context.Context, req *types.ChatCompletionRequest, w io.Writer) error {
-	return e.doStream(ctx, req, &sseTranslator{w: w, model: req.Model})
+func (e *CodexExecutor) ExecuteStream(ctx context.Context, req *types.ChatCompletionRequest, w io.Writer) (*types.Usage, error) {
+	t := &sseTranslator{w: w, model: req.Model}
+	err := e.doStream(ctx, req, t)
+	return t.usage, err
 }
 
 // ExecuteRawStream sends a raw JSON body to Codex /responses and writes SSE output to w.
@@ -375,6 +377,7 @@ type sseTranslator struct {
 	initialized   bool
 	hasToolCalls  bool
 	toolCallIndex int
+	usage         *types.Usage
 }
 
 func (t *sseTranslator) Write(p []byte) (int, error) {
@@ -450,6 +453,18 @@ func (t *sseTranslator) Write(p []byte) (int, error) {
 			}
 
 		case "response.completed":
+			if resp, ok := event["response"].(map[string]interface{}); ok {
+				if u, ok := resp["usage"].(map[string]interface{}); ok {
+					t.usage = &types.Usage{}
+					if v, ok := u["input_tokens"].(float64); ok {
+						t.usage.PromptTokens = int(v)
+					}
+					if v, ok := u["output_tokens"].(float64); ok {
+						t.usage.CompletionTokens = int(v)
+					}
+					t.usage.TotalTokens = t.usage.PromptTokens + t.usage.CompletionTokens
+				}
+			}
 			finishReason := "stop"
 			if t.hasToolCalls {
 				finishReason = "tool_calls"

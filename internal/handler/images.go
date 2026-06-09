@@ -2,7 +2,9 @@ package handler
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -13,6 +15,8 @@ import (
 	"github.com/user/cli-proxy/internal/router"
 	"github.com/user/cli-proxy/internal/stats"
 )
+
+const imageGenTimeout = 5 * time.Minute
 
 type ImagesHandler struct {
 	router  *router.Router
@@ -47,7 +51,6 @@ func (h *ImagesHandler) ImagesGenerations(c *gin.Context) {
 		req.Model = "gpt-image-2"
 	}
 
-	// Find a codex executor
 	exec, err := h.findCodexExecutor()
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{
@@ -56,15 +59,30 @@ func (h *ImagesHandler) ImagesGenerations(c *gin.Context) {
 		return
 	}
 
+	promptSnippet := req.Prompt
+	if len(promptSnippet) > 100 {
+		promptSnippet = promptSnippet[:100] + "..."
+	}
+	log.Printf("image generation: model=%s size=%s quality=%s prompt=%q", req.Model, req.Size, req.Quality, promptSnippet)
+
 	start := time.Now()
+
+	ctx, cancel := context.WithTimeout(c.Request.Context(), imageGenTimeout)
+	defer cancel()
 
 	codexReq := buildCodexImageRequest(&req)
 	body, _ := json.Marshal(codexReq)
 
 	var buf bytes.Buffer
-	if err := exec.ExecuteRawStream(c.Request.Context(), body, &buf); err != nil {
-		log.Printf("image generation error: %v", err)
-		h.recordLog(req.Model, start, err)
+	if err := exec.ExecuteRawStream(ctx, body, &buf); err != nil {
+		latency := time.Since(start)
+		if errors.Is(err, context.DeadlineExceeded) {
+			log.Printf("image generation timeout after %s: model=%s prompt=%q", latency.Round(time.Second), req.Model, promptSnippet)
+			h.recordLog(req.Model, start, fmt.Errorf("timeout after %s", latency.Round(time.Second)))
+		} else {
+			log.Printf("image generation error after %s: %v", latency.Round(time.Second), err)
+			h.recordLog(req.Model, start, err)
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": gin.H{"message": err.Error(), "type": "server_error"},
 		})
@@ -81,6 +99,8 @@ func (h *ImagesHandler) ImagesGenerations(c *gin.Context) {
 		return
 	}
 
+	latency := time.Since(start)
+	log.Printf("image generation success: model=%s images=%d latency=%s", req.Model, len(resp.Data), latency.Round(time.Millisecond))
 	h.recordLog(req.Model, start, nil)
 	c.JSON(http.StatusOK, resp)
 }

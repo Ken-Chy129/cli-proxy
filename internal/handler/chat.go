@@ -80,14 +80,14 @@ func (h *ChatHandler) ChatCompletions(c *gin.Context) {
 }
 
 func (h *ChatHandler) handleStream(c *gin.Context, exec interface {
-	ExecuteStream(ctx context.Context, req *types.ChatCompletionRequest, w io.Writer) error
+	ExecuteStream(ctx context.Context, req *types.ChatCompletionRequest, w io.Writer) (*types.Usage, error)
 }, req *types.ChatCompletionRequest, start time.Time) {
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
 	c.Header("Connection", "keep-alive")
 
 	c.Stream(func(w io.Writer) bool {
-		err := exec.ExecuteStream(c.Request.Context(), req, w)
+		usage, err := exec.ExecuteStream(c.Request.Context(), req, w)
 		latency := time.Since(start)
 
 		logEntry := &stats.RequestLog{
@@ -97,6 +97,10 @@ func (h *ChatHandler) handleStream(c *gin.Context, exec interface {
 			LatencyMs: latency.Milliseconds(),
 			Stream:    true,
 			Status:    http.StatusOK,
+		}
+		if usage != nil {
+			logEntry.PromptTokens = usage.PromptTokens
+			logEntry.CompletionTokens = usage.CompletionTokens
 		}
 		if err != nil {
 			log.Printf("stream error: %v", err)

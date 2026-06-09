@@ -105,7 +105,7 @@ func (e *VertexExecutor) Execute(ctx context.Context, req *types.ChatCompletionR
 	return FromAnthropicResponse(&anthropicResp, req.Model), nil
 }
 
-func (e *VertexExecutor) ExecuteStream(ctx context.Context, req *types.ChatCompletionRequest, w io.Writer) error {
+func (e *VertexExecutor) ExecuteStream(ctx context.Context, req *types.ChatCompletionRequest, w io.Writer) (*types.Usage, error) {
 	vertexModel := e.resolveModel(req.Model)
 	ar := ToAnthropicRequest(req, vertexModel)
 	ar.Stream = true
@@ -113,32 +113,31 @@ func (e *VertexExecutor) ExecuteStream(ctx context.Context, req *types.ChatCompl
 
 	token, err := e.getToken(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	body, _ := json.Marshal(ar)
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, e.buildURL(vertexModel, true), bytes.NewReader(body))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	httpReq.Header.Set("Authorization", "Bearer "+token)
 	httpReq.Header.Set("Content-Type", "application/json")
 
 	resp, err := http.DefaultClient.Do(httpReq)
 	if err != nil {
-		return fmt.Errorf("vertex stream request: %w", err)
+		return nil, fmt.Errorf("vertex stream request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("vertex error %d: %s", resp.StatusCode, string(respBody))
+		return nil, fmt.Errorf("vertex error %d: %s", resp.StatusCode, string(respBody))
 	}
 
 	chunkID := fmt.Sprintf("chatcmpl-%s", uuid.New().String()[:24])
 	created := time.Now().Unix()
 
-	// Send initial role chunk
 	writeSSEChunk(w, types.ChatCompletionChunk{
 		ID: chunkID, Object: "chat.completion.chunk", Created: created, Model: req.Model,
 		Choices: []types.ChatCompletionChoice{
@@ -146,6 +145,7 @@ func (e *VertexExecutor) ExecuteStream(ctx context.Context, req *types.ChatCompl
 		},
 	})
 
+	var usage types.Usage
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Buffer(make([]byte, 0, 1024*1024), 1024*1024)
 	var hasToolCalls bool
@@ -167,6 +167,11 @@ func (e *VertexExecutor) ExecuteStream(ctx context.Context, req *types.ChatCompl
 		}
 
 		switch event.Type {
+		case "message_start":
+			if event.Message != nil {
+				usage.PromptTokens = event.Message.Usage.InputTokens
+			}
+
 		case "content_block_start":
 			if event.ContentBlock != nil && event.ContentBlock.Type == "tool_use" {
 				hasToolCalls = true
@@ -217,6 +222,10 @@ func (e *VertexExecutor) ExecuteStream(ctx context.Context, req *types.ChatCompl
 			}
 
 		case "message_delta":
+			if event.Usage != nil {
+				usage.CompletionTokens = event.Usage.OutputTokens
+				usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
+			}
 			finishReason := "stop"
 			if hasToolCalls {
 				finishReason = "tool_calls"
@@ -240,7 +249,7 @@ func (e *VertexExecutor) ExecuteStream(ctx context.Context, req *types.ChatCompl
 	}
 
 	fmt.Fprint(w, "data: [DONE]\n\n")
-	return nil
+	return &usage, nil
 }
 
 func writeSSEChunk(w io.Writer, chunk types.ChatCompletionChunk) {

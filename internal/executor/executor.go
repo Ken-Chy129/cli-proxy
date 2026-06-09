@@ -10,7 +10,7 @@ import (
 
 type Executor interface {
 	Execute(ctx context.Context, req *types.ChatCompletionRequest) (*types.ChatCompletionResponse, error)
-	ExecuteStream(ctx context.Context, req *types.ChatCompletionRequest, w io.Writer) error
+	ExecuteStream(ctx context.Context, req *types.ChatCompletionRequest, w io.Writer) (*types.Usage, error)
 	Models() []string
 }
 

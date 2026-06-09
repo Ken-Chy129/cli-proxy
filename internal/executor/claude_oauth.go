@@ -72,32 +72,32 @@ func (e *ClaudeOAuthExecutor) Execute(ctx context.Context, req *types.ChatComple
 	return FromAnthropicResponse(&anthropicResp, req.Model), nil
 }
 
-func (e *ClaudeOAuthExecutor) ExecuteStream(ctx context.Context, req *types.ChatCompletionRequest, w io.Writer) error {
+func (e *ClaudeOAuthExecutor) ExecuteStream(ctx context.Context, req *types.ChatCompletionRequest, w io.Writer) (*types.Usage, error) {
 	ar := ToAnthropicRequest(req, req.Model)
 	ar.Stream = true
 	ar.AnthropicVersion = ""
 
 	token, err := e.oauth.GetToken(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	body, _ := json.Marshal(ar)
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://api.anthropic.com/v1/messages?beta=true", bytes.NewReader(body))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	applyClaudeOAuthHeaders(httpReq, token)
 
 	resp, err := e.httpClient.Do(httpReq)
 	if err != nil {
-		return fmt.Errorf("claude oauth stream request: %w", err)
+		return nil, fmt.Errorf("claude oauth stream request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("claude oauth error %d: %s", resp.StatusCode, string(respBody))
+		return nil, fmt.Errorf("claude oauth error %d: %s", resp.StatusCode, string(respBody))
 	}
 
 	chunkID := fmt.Sprintf("chatcmpl-%s", uuid.New().String()[:24])
@@ -110,6 +110,7 @@ func (e *ClaudeOAuthExecutor) ExecuteStream(ctx context.Context, req *types.Chat
 		},
 	})
 
+	var usage types.Usage
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Buffer(make([]byte, 0, 1024*1024), 1024*1024)
 	var hasToolCalls bool
@@ -130,6 +131,11 @@ func (e *ClaudeOAuthExecutor) ExecuteStream(ctx context.Context, req *types.Chat
 		}
 
 		switch event.Type {
+		case "message_start":
+			if event.Message != nil {
+				usage.PromptTokens = event.Message.Usage.InputTokens
+			}
+
 		case "content_block_start":
 			if event.ContentBlock != nil && event.ContentBlock.Type == "tool_use" {
 				hasToolCalls = true
@@ -177,6 +183,10 @@ func (e *ClaudeOAuthExecutor) ExecuteStream(ctx context.Context, req *types.Chat
 			}
 
 		case "message_delta":
+			if event.Usage != nil {
+				usage.CompletionTokens = event.Usage.OutputTokens
+				usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
+			}
 			finishReason := "stop"
 			if hasToolCalls {
 				finishReason = "tool_calls"
@@ -200,7 +210,7 @@ func (e *ClaudeOAuthExecutor) ExecuteStream(ctx context.Context, req *types.Chat
 	}
 
 	fmt.Fprint(w, "data: [DONE]\n\n")
-	return nil
+	return &usage, nil
 }
 
 func applyClaudeOAuthHeaders(req *http.Request, token string) {

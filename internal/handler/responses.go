@@ -196,7 +196,7 @@ func (h *ResponsesHandler) toChatCompletionRequest(req *responsesRequest) *types
 
 func (h *ResponsesHandler) streamWithTranslation(ctx context.Context, exec executor.Executor, req *types.ChatCompletionRequest, w io.Writer) error {
 	var buf bytes.Buffer
-	if err := exec.ExecuteStream(ctx, req, &buf); err != nil {
+	if _, err := exec.ExecuteStream(ctx, req, &buf); err != nil {
 		return err
 	}
 

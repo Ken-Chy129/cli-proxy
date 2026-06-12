@@ -1,0 +1,12 @@
+cli-proxy
+cli-proxy-linux
+*.db
+*.json
+!config.example.yaml
+config.yaml
+.git
+.idea
+.gitignore
+deploy.sh
+README.md
+README_EN.md

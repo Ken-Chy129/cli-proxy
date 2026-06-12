@@ -33,6 +33,7 @@ func Run(cfg *config.Config, r *router.Router, tokenStore *auth.TokenStore, stat
 
 	// Dashboard (session protected)
 	engine.GET("/", SessionAuth(), dashboard.Handler())
+	engine.StaticFS("/static", dashboard.StaticFS())
 
 	// /v1/* API routes (Bearer token protected)
 	api := engine.Group("/", APIKeyAuth(cfg.Server.APIKey))

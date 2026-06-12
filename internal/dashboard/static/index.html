@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CLI Proxy</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="container">
+  <div class="header">
+    <h1>CLI Proxy</h1>
+    <div class="header-stats">
+      <div class="header-stat">
+        <div class="header-stat-value" id="total-requests">-</div>
+        <div class="header-stat-label">Requests</div>
+      </div>
+      <div class="header-stat">
+        <div class="header-stat-value" id="total-tokens">-</div>
+        <div class="header-stat-label">Tokens</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="backends" id="backends"></div>
+
+  <div id="quota-section" class="quota-section" style="display:none;margin-bottom:20px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+      <h3 style="margin:0">Codex Quota</h3>
+      <button class="btn btn-secondary" style="padding:3px 10px;font-size:11px" onclick="syncModels()">Refresh</button>
+    </div>
+    <div id="quota-grid" class="quota-grid"></div>
+  </div>
+
+  <div class="tabs">
+    <div class="tab active" onclick="switchTab('chat',this)">Chat</div>
+    <div class="tab" onclick="switchTab('logs',this)">Logs</div>
+    <div class="tab" onclick="switchTab('stats',this)">Stats</div>
+    <div class="tab" onclick="switchTab('config',this)">Config</div>
+  </div>
+
+  <div id="tab-chat">
+    <div class="chat-panel">
+      <div class="chat-toolbar">
+        <select id="chat-model" class="model-select"></select>
+        <button class="btn btn-primary" onclick="sendChat()">Send</button>
+        <button class="btn btn-secondary" onclick="clearChat()">Clear</button>
+      </div>
+      <textarea id="chat-input" class="chat-input" rows="2" placeholder="Type a message..."></textarea>
+      <div id="chat-output" class="chat-output"></div>
+    </div>
+  </div>
+
+  <div id="tab-logs" class="hidden">
+    <div class="panel">
+      <div class="panel-header">
+        <span><strong id="log-total">0</strong> total</span>
+        <button class="btn btn-secondary" style="padding:4px 10px;font-size:12px" onclick="loadLogs()">Refresh</button>
+      </div>
+      <table>
+        <thead><tr><th>Time</th><th>Model</th><th>Backend</th><th>Latency</th><th>Tokens</th><th>Status</th></tr></thead>
+        <tbody id="log-body"></tbody>
+      </table>
+      <div class="pagination">
+        <button class="page-btn" onclick="prevPage()">&larr;</button>
+        <span class="page-info" id="page-info">1 / 1</span>
+        <button class="page-btn" onclick="nextPage()">&rarr;</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="tab-stats" class="hidden">
+    <div class="stats-toolbar" id="stats-toolbar">
+      <button class="stats-btn" onclick="loadStats('today',this)">Today</button>
+      <button class="stats-btn active" onclick="loadStats('7d',this)">7d</button>
+      <button class="stats-btn" onclick="loadStats('30d',this)">30d</button>
+      <button class="stats-btn" onclick="loadStats('all',this)">All</button>
+    </div>
+    <div class="stats-grid">
+      <div class="panel">
+        <div class="panel-header"><span>By Model</span></div>
+        <table>
+          <thead><tr><th>Model</th><th>Reqs</th><th>Tokens</th><th>Avg ms</th><th>Err</th></tr></thead>
+          <tbody id="stats-model-body"></tbody>
+        </table>
+      </div>
+      <div class="panel">
+        <div class="panel-header"><span>By Day</span></div>
+        <table>
+          <thead><tr><th>Date</th><th>Reqs</th><th>Tokens</th><th>Err</th></tr></thead>
+          <tbody id="stats-day-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div id="tab-config" class="hidden">
+    <div class="panel">
+      <pre class="config-display" id="config-display"></pre>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="add-account-modal">
+  <div class="modal">
+    <h3 id="modal-title" style="margin-bottom:20px">Add Codex Account</h3>
+    <div id="modal-step1">
+      <div style="display:flex;align-items:flex-start;gap:12px;margin-bottom:16px">
+        <span style="background:var(--accent);color:#fff;width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;flex-shrink:0">1</span>
+        <div style="flex:1">
+          <div style="font-size:13px;color:var(--text-0);margin-bottom:10px">Open authorization page and complete login</div>
+          <a id="modal-auth-link" href="#" target="_blank" class="btn btn-primary" style="display:inline-block;text-decoration:none;font-size:12px;padding:6px 20px" onclick="setTimeout(function(){document.getElementById('modal-step1').style.display='none';document.getElementById('modal-step2').style.display='';},500)">Open Login Page &rarr;</a>
+        </div>
+      </div>
+    </div>
+    <div id="modal-step2" style="display:none">
+      <div style="display:flex;align-items:flex-start;gap:12px">
+        <span style="background:var(--accent);color:#fff;width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;flex-shrink:0">2</span>
+        <div style="flex:1">
+          <div style="font-size:13px;color:var(--text-0);margin-bottom:4px">Paste the callback URL</div>
+          <div style="font-size:11px;color:var(--text-2);margin-bottom:8px">Login will redirect to a page that can't load — copy the URL from the address bar</div>
+          <textarea id="modal-callback-url" placeholder="http://localhost:1455/auth/callback?code=..."></textarea>
+          <div id="modal-error" style="color:var(--red);font-size:12px;min-height:16px;margin-top:2px"></div>
+        </div>
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" id="modal-submit" onclick="submitCallbackURL()">Submit</button>
+    </div>
+    <div class="auth-url" id="modal-auth-url" style="display:none"></div>
+  </div>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

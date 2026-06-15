@@ -1,11 +1,13 @@
 package handler
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -69,7 +71,7 @@ func (h *AnthropicHandler) handleAnthropicStream(c *gin.Context, ae executor.Ant
 	stream, statusCode, err := ae.OpenAnthropicStream(c.Request.Context(), body, c.Request.Header)
 	if err != nil {
 		log.Printf("anthropic stream open error: %v", err)
-		h.recordAnthropicLog(model, start, true, err)
+		h.recordAnthropicLog(model, start, true, nil, err)
 		anthropicError(c, http.StatusBadGateway, "api_error", err.Error())
 		return
 	}
@@ -77,7 +79,7 @@ func (h *AnthropicHandler) handleAnthropicStream(c *gin.Context, ae executor.Ant
 
 	if statusCode != http.StatusOK {
 		errBody, _ := io.ReadAll(stream)
-		h.recordAnthropicLog(model, start, true, fmt.Errorf("upstream error %d", statusCode))
+		h.recordAnthropicLog(model, start, true, nil, fmt.Errorf("upstream error %d", statusCode))
 		c.Data(statusCode, "application/json", errBody)
 		return
 	}
@@ -87,8 +89,8 @@ func (h *AnthropicHandler) handleAnthropicStream(c *gin.Context, ae executor.Ant
 	c.Header("Connection", "keep-alive")
 	c.Writer.Flush()
 
-	copyErr := copyWithFlush(stream, c.Writer)
-	h.recordAnthropicLog(model, start, true, copyErr)
+	usage, copyErr := copyStreamAndExtractUsage(stream, c.Writer)
+	h.recordAnthropicLog(model, start, true, usage, copyErr)
 	if copyErr != nil {
 		log.Printf("anthropic stream copy error: %v", copyErr)
 	}
@@ -96,12 +98,14 @@ func (h *AnthropicHandler) handleAnthropicStream(c *gin.Context, ae executor.Ant
 
 func (h *AnthropicHandler) handleAnthropicRaw(c *gin.Context, ae executor.AnthropicExecutor, model string, body []byte, start time.Time) {
 	respBody, statusCode, err := ae.ExecuteAnthropicRaw(c.Request.Context(), body, c.Request.Header)
-	h.recordAnthropicLog(model, start, false, err)
 	if err != nil {
+		h.recordAnthropicLog(model, start, false, nil, err)
 		log.Printf("anthropic error: %v", err)
 		anthropicError(c, http.StatusBadGateway, "api_error", err.Error())
 		return
 	}
+	usage := extractUsageFromResponse(respBody)
+	h.recordAnthropicLog(model, start, false, usage, nil)
 	c.Data(statusCode, "application/json", respBody)
 }
 
@@ -115,7 +119,73 @@ func anthropicError(c *gin.Context, status int, errType, message string) {
 	})
 }
 
-func (h *AnthropicHandler) recordAnthropicLog(model string, start time.Time, stream bool, err error) {
+type anthropicUsage struct {
+	InputTokens  int `json:"input_tokens"`
+	OutputTokens int `json:"output_tokens"`
+}
+
+func extractUsageFromResponse(body []byte) *anthropicUsage {
+	var resp struct {
+		Usage *anthropicUsage `json:"usage"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil || resp.Usage == nil {
+		return nil
+	}
+	return resp.Usage
+}
+
+// copyStreamAndExtractUsage forwards an Anthropic SSE stream to the client
+// while extracting token usage from message_start and message_delta events.
+func copyStreamAndExtractUsage(src io.Reader, dst io.Writer) (*anthropicUsage, error) {
+	flusher, canFlush := dst.(interface{ Flush() })
+	scanner := bufio.NewScanner(src)
+	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
+
+	var usage anthropicUsage
+
+	for scanner.Scan() {
+		line := scanner.Text()
+
+		if strings.HasPrefix(line, "data: ") {
+			data := line[6:]
+			var evt struct {
+				Type    string `json:"type"`
+				Message *struct {
+					Usage *anthropicUsage `json:"usage"`
+				} `json:"message"`
+				Usage *struct {
+					OutputTokens int `json:"output_tokens"`
+				} `json:"usage"`
+			}
+			if json.Unmarshal([]byte(data), &evt) == nil {
+				switch evt.Type {
+				case "message_start":
+					if evt.Message != nil && evt.Message.Usage != nil {
+						usage.InputTokens = evt.Message.Usage.InputTokens
+					}
+				case "message_delta":
+					if evt.Usage != nil {
+						usage.OutputTokens = evt.Usage.OutputTokens
+					}
+				}
+			}
+		}
+
+		if _, err := io.WriteString(dst, line+"\n"); err != nil {
+			return &usage, err
+		}
+		if canFlush {
+			flusher.Flush()
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return &usage, err
+	}
+	return &usage, nil
+}
+
+func (h *AnthropicHandler) recordAnthropicLog(model string, start time.Time, stream bool, usage *anthropicUsage, err error) {
 	if h.statsDB == nil {
 		return
 	}
@@ -126,6 +196,10 @@ func (h *AnthropicHandler) recordAnthropicLog(model string, start time.Time, str
 		LatencyMs: time.Since(start).Milliseconds(),
 		Stream:    stream,
 		Status:    http.StatusOK,
+	}
+	if usage != nil {
+		entry.PromptTokens = usage.InputTokens
+		entry.CompletionTokens = usage.OutputTokens
 	}
 	if err != nil {
 		entry.Status = http.StatusInternalServerError

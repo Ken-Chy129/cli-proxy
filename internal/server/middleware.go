@@ -3,15 +3,15 @@ package server
 import (
 	"crypto/rand"
 	"encoding/hex"
-	"log"
+	"fmt"
 	"net/http"
 	"strings"
 	"sync"
 
 	"github.com/gin-gonic/gin"
+	"github.com/user/cli-proxy/internal/auth"
+	"github.com/user/cli-proxy/internal/stats"
 )
-
-func min(a, b int) int { if a < b { return a }; return b }
 
 var sessions = &sessionStore{tokens: make(map[string]bool)}
 
@@ -37,33 +37,81 @@ func (s *sessionStore) Valid(token string) bool {
 }
 
 // APIKeyAuth protects /v1/* endpoints with Bearer token OR session cookie.
-func APIKeyAuth(apiKey string) gin.HandlerFunc {
+// Checks managed keys first, then falls back to the legacy single key from config.
+func APIKeyAuth(legacyKey string, keyStore *auth.KeyStore) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		if legacyKey == "" && keyStore.Count() == 0 {
+			c.Next()
+			return
+		}
+		// Extract key from headers
+		apiKey := ""
+		authHeader := c.GetHeader("Authorization")
+		if t := strings.TrimPrefix(authHeader, "Bearer "); t != authHeader {
+			apiKey = t
+		}
 		if apiKey == "" {
-			c.Next()
-			return
+			apiKey = c.GetHeader("x-api-key")
 		}
-		// Check Bearer token first
-		auth := c.GetHeader("Authorization")
-		token := strings.TrimPrefix(auth, "Bearer ")
-		if token != "" && token == apiKey {
-			c.Next()
-			return
-		}
-		// Check x-api-key (Anthropic API style)
-		if xKey := c.GetHeader("x-api-key"); xKey == apiKey {
-			c.Next()
-			return
+
+		if apiKey != "" {
+			// Check managed keys first
+			if kd := keyStore.Validate(apiKey); kd != nil {
+				c.Set("api_key_name", kd.Name)
+				c.Set("api_key_id", kd.ID)
+				c.Set("api_key_limit", kd.TokenLimitDaily)
+				c.Next()
+				return
+			}
+			// Check legacy config key
+			if apiKey == legacyKey {
+				c.Set("api_key_name", "default")
+				c.Next()
+				return
+			}
 		}
 		// Fall back to session cookie (for dashboard chat test)
 		if cookie, err := c.Cookie("session"); err == nil && sessions.Valid(cookie) {
+			c.Set("api_key_name", "dashboard")
 			c.Next()
 			return
 		}
-		log.Printf("AUTH REJECTED: path=%s auth_header=%q token_len=%d expected_len=%d", c.Request.URL.Path, auth[:min(20, len(auth))], len(token), len(apiKey))
 		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
 			"error": gin.H{"message": "invalid api key", "type": "invalid_request_error"},
 		})
+	}
+}
+
+// TokenLimitCheck enforces daily token limits for managed API keys.
+func TokenLimitCheck(statsDB *stats.DB) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		limitVal, exists := c.Get("api_key_limit")
+		if !exists {
+			c.Next()
+			return
+		}
+		limit, ok := limitVal.(int)
+		if !ok || limit <= 0 {
+			c.Next()
+			return
+		}
+		keyName, _ := c.Get("api_key_name")
+		name, _ := keyName.(string)
+		if name == "" {
+			c.Next()
+			return
+		}
+		used := statsDB.TokensTodayForKey(name)
+		if used >= limit {
+			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
+				"error": gin.H{
+					"message": fmt.Sprintf("daily token limit exceeded (%d/%d)", used, limit),
+					"type":    "rate_limit_error",
+				},
+			})
+			return
+		}
+		c.Next()
 	}
 }
 

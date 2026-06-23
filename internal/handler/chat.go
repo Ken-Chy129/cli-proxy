@@ -52,10 +52,11 @@ func (h *ChatHandler) ChatCompletions(c *gin.Context) {
 	latency := time.Since(start)
 
 	logEntry := &stats.RequestLog{
-		Time:    time.Now(),
-		Model:   req.Model,
-		Backend: h.router.BackendName(req.Model),
-		Stream:  false,
+		Time:       time.Now(),
+		Model:      req.Model,
+		Backend:    h.router.BackendName(req.Model),
+		Stream:     false,
+		APIKeyName: apiKeyName(c),
 	}
 
 	if err != nil {
@@ -93,12 +94,13 @@ func (h *ChatHandler) handleStream(c *gin.Context, exec interface {
 		latency := time.Since(start)
 
 		logEntry := &stats.RequestLog{
-			Time:      time.Now(),
-			Model:     req.Model,
-			Backend:   h.router.BackendName(req.Model),
-			LatencyMs: latency.Milliseconds(),
-			Stream:    true,
-			Status:    http.StatusOK,
+			Time:       time.Now(),
+			Model:      req.Model,
+			Backend:    h.router.BackendName(req.Model),
+			LatencyMs:  latency.Milliseconds(),
+			Stream:     true,
+			Status:     http.StatusOK,
+			APIKeyName: apiKeyName(c),
 		}
 		if usage != nil {
 			logEntry.PromptTokens = usage.PromptTokens
@@ -122,6 +124,13 @@ func (h *ChatHandler) recordLog(entry *stats.RequestLog) {
 			log.Printf("stats record error: %v", err)
 		}
 	}
+}
+
+func apiKeyName(c *gin.Context) string {
+	if v, ok := c.Get("api_key_name"); ok {
+		return v.(string)
+	}
+	return ""
 }
 
 func (h *ChatHandler) ListModels(c *gin.Context) {

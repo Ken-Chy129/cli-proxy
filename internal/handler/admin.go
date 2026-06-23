@@ -17,17 +17,18 @@ import (
 )
 
 type AdminHandler struct {
-	cfg        *config.Config
-	router     *router.Router
-	tokenStore *auth.TokenStore
-	statsDB    *stats.DB
+	cfg         *config.Config
+	router      *router.Router
+	tokenStore  *auth.TokenStore
+	keyStore    *auth.KeyStore
+	statsDB     *stats.DB
 	claudeOAuth *auth.ClaudeOAuth
 	codexOAuth  *auth.CodexOAuth
 	vertexExec  *executor.VertexExecutor
 }
 
-func NewAdminHandler(cfg *config.Config, r *router.Router, store *auth.TokenStore, db *stats.DB, claudeOAuth *auth.ClaudeOAuth, codexOAuth *auth.CodexOAuth, vertexExec *executor.VertexExecutor) *AdminHandler {
-	return &AdminHandler{cfg: cfg, router: r, tokenStore: store, statsDB: db, claudeOAuth: claudeOAuth, codexOAuth: codexOAuth, vertexExec: vertexExec}
+func NewAdminHandler(cfg *config.Config, r *router.Router, store *auth.TokenStore, keyStore *auth.KeyStore, db *stats.DB, claudeOAuth *auth.ClaudeOAuth, codexOAuth *auth.CodexOAuth, vertexExec *executor.VertexExecutor) *AdminHandler {
+	return &AdminHandler{cfg: cfg, router: r, tokenStore: store, keyStore: keyStore, statsDB: db, claudeOAuth: claudeOAuth, codexOAuth: codexOAuth, vertexExec: vertexExec}
 }
 
 func (h *AdminHandler) Status(c *gin.Context) {
@@ -327,6 +328,77 @@ func (h *AdminHandler) ToggleBackend(c *gin.Context) {
 		h.tokenStore.DisableBackend(backend)
 		c.JSON(http.StatusOK, gin.H{"ok": true, "backend": backend, "disabled": true})
 	}
+}
+
+func (h *AdminHandler) ListKeys(c *gin.Context) {
+	keys := h.keyStore.All()
+	keyStats, _ := h.statsDB.StatsByKey()
+	statsMap := make(map[string]*stats.KeyStats)
+	for i := range keyStats {
+		statsMap[keyStats[i].KeyName] = &keyStats[i]
+	}
+
+	result := make([]gin.H, len(keys))
+	for i, k := range keys {
+		entry := gin.H{
+			"id":                k.ID,
+			"name":              k.Name,
+			"key":               k.Key[:7] + "..." + k.Key[len(k.Key)-4:],
+			"token_limit_daily": k.TokenLimitDaily,
+			"created_at":        k.CreatedAt,
+		}
+		if s := statsMap[k.Name]; s != nil {
+			entry["request_count"] = s.RequestCount
+			entry["total_tokens"] = s.TotalTokens
+			entry["tokens_today"] = s.TokensToday
+			entry["error_count"] = s.ErrorCount
+		}
+		result[i] = entry
+	}
+	c.JSON(http.StatusOK, gin.H{"keys": result})
+}
+
+func (h *AdminHandler) CreateKey(c *gin.Context) {
+	var req struct {
+		Name            string `json:"name"`
+		TokenLimitDaily int    `json:"token_limit_daily"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.Name == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "name is required"})
+		return
+	}
+	kd, err := h.keyStore.Add(req.Name, req.TokenLimitDaily)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true, "key": kd})
+}
+
+func (h *AdminHandler) UpdateKey(c *gin.Context) {
+	id := c.Param("id")
+	var req struct {
+		Name            string `json:"name"`
+		TokenLimitDaily int    `json:"token_limit_daily"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if err := h.keyStore.Update(id, req.Name, req.TokenLimitDaily); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+func (h *AdminHandler) DeleteKey(c *gin.Context) {
+	id := c.Param("id")
+	if err := h.keyStore.Delete(id); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
 func (h *AdminHandler) ToggleAccount(c *gin.Context) {

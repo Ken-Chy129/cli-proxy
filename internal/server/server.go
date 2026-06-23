@@ -14,7 +14,7 @@ import (
 	"github.com/user/cli-proxy/internal/stats"
 )
 
-func Run(cfg *config.Config, r *router.Router, tokenStore *auth.TokenStore, statsDB *stats.DB,
+func Run(cfg *config.Config, r *router.Router, tokenStore *auth.TokenStore, keyStore *auth.KeyStore, statsDB *stats.DB,
 	claudeOAuth *auth.ClaudeOAuth, codexOAuth *auth.CodexOAuth,
 	claudeExec *executor.ClaudeOAuthExecutor, codexExec *executor.CodexExecutor,
 	vertexExec *executor.VertexExecutor) error {
@@ -24,7 +24,7 @@ func Run(cfg *config.Config, r *router.Router, tokenStore *auth.TokenStore, stat
 	engine.Use(gin.Recovery())
 
 	chatHandler := handler.NewChatHandler(r, statsDB)
-	adminHandler := handler.NewAdminHandler(cfg, r, tokenStore, statsDB, claudeOAuth, codexOAuth, vertexExec)
+	adminHandler := handler.NewAdminHandler(cfg, r, tokenStore, keyStore, statsDB, claudeOAuth, codexOAuth, vertexExec)
 	imagesHandler := handler.NewImagesHandler(r, statsDB)
 	anthropicHandler := handler.NewAnthropicHandler(r, statsDB)
 
@@ -37,7 +37,7 @@ func Run(cfg *config.Config, r *router.Router, tokenStore *auth.TokenStore, stat
 	engine.StaticFS("/static", dashboard.StaticFS())
 
 	// /v1/* API routes (Bearer token protected)
-	api := engine.Group("/", APIKeyAuth(cfg.Server.APIKey))
+	api := engine.Group("/", APIKeyAuth(cfg.Server.APIKey, keyStore), TokenLimitCheck(statsDB))
 	responsesHandler := handler.NewResponsesHandler(r, statsDB)
 
 	api.POST("/v1/chat/completions", chatHandler.ChatCompletions)
@@ -60,6 +60,10 @@ func Run(cfg *config.Config, r *router.Router, tokenStore *auth.TokenStore, stat
 	admin.DELETE("/vertex/credentials", adminHandler.DeleteVertexCredentials)
 	admin.POST("/backends/:backend/toggle", adminHandler.ToggleBackend)
 	admin.POST("/accounts/:provider/:id/toggle", adminHandler.ToggleAccount)
+	admin.GET("/keys", adminHandler.ListKeys)
+	admin.POST("/keys", adminHandler.CreateKey)
+	admin.PUT("/keys/:id", adminHandler.UpdateKey)
+	admin.DELETE("/keys/:id", adminHandler.DeleteKey)
 
 	// OAuth login (session protected)
 	if claudeOAuth != nil {

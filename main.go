@@ -84,7 +84,8 @@ func main() {
 		}
 	}
 
-	if err := server.Run(cfg, r, tokenStore, statsDB, claudeOAuth, codexOAuth, claudeExec, codexExec, vertexExec); err != nil {
+	keyStore := auth.NewKeyStore(tokenStore.Dir())
+	if err := server.Run(cfg, r, tokenStore, keyStore, statsDB, claudeOAuth, codexOAuth, claudeExec, codexExec, vertexExec); err != nil {
 		log.Fatalf("server error: %v", err)
 	}
 }

@@ -37,6 +37,7 @@
     <div class="tab" onclick="switchTab('image',this)">Image</div>
     <div class="tab" onclick="switchTab('logs',this)">Logs</div>
     <div class="tab" onclick="switchTab('stats',this)">Stats</div>
+    <div class="tab" onclick="switchTab('keys',this)">Keys</div>
     <div class="tab" onclick="switchTab('config',this)">Config</div>
   </div>
 
@@ -144,6 +145,27 @@
           <thead><tr><th>Date</th><th>Reqs</th><th>Tokens</th><th>Err</th></tr></thead>
           <tbody id="stats-day-body"></tbody>
         </table>
+      </div>
+    </div>
+  </div>
+
+  <div id="tab-keys" class="hidden">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+      <h3 style="font-size:14px">API Keys</h3>
+      <button class="btn-add" onclick="openCreateKey()">+ Create Key</button>
+    </div>
+    <table class="log-table"><thead><tr><th>Name</th><th>Key</th><th>Requests</th><th>Tokens Today</th><th>Total Tokens</th><th>Daily Limit</th><th>Actions</th></tr></thead>
+    <tbody id="keys-body"></tbody></table>
+    <div id="create-key-form" style="display:none;margin-top:12px;padding:12px;border:1px solid var(--border);border-radius:8px">
+      <div style="display:flex;gap:8px;align-items:end">
+        <div><label style="font-size:11px;color:var(--text-2)">Name</label><input id="key-name" style="width:160px" placeholder="e.g. team-alice"></div>
+        <div><label style="font-size:11px;color:var(--text-2)">Daily Token Limit (0=unlimited)</label><input id="key-limit" type="number" style="width:120px" value="0"></div>
+        <button class="btn btn-primary" style="padding:6px 16px;font-size:12px" onclick="submitCreateKey()">Create</button>
+        <button class="btn" style="padding:6px 12px;font-size:12px" onclick="document.getElementById('create-key-form').style.display='none'">Cancel</button>
+      </div>
+      <div id="key-created" style="display:none;margin-top:8px;padding:8px;background:var(--bg-0);border-radius:6px;font-size:12px">
+        <div style="color:var(--green);margin-bottom:4px">Key created! Copy it now — it won't be shown again in full.</div>
+        <code id="key-created-value" style="word-break:break-all"></code>
       </div>
     </div>
   </div>

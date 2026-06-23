@@ -141,8 +141,9 @@ async function loadLogs() {
     const t = new Date(l.time).toLocaleString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit', day: '2-digit', month: 'short' });
     const tok = (l.prompt_tokens || 0) + (l.completion_tokens || 0);
     const sc = l.status < 400 ? 'text-green' : 'text-red';
+    const keyTag = l.api_key_name ? '<span style="font-size:10px;color:var(--accent);margin-left:4px">[' + l.api_key_name + ']</span>' : '';
     const errRow = l.error ? `<tr><td colspan="6" style="padding:2px 12px 8px;font-size:11px;color:var(--red);border:none">${l.error}</td></tr>` : '';
-    return `<tr><td class="text-muted text-mono">${t}</td><td class="text-mono">${l.model}</td><td class="text-muted">${l.backend}</td><td>${l.latency_ms}ms</td><td>${tok}</td><td class="${sc}">${l.status}</td></tr>${errRow}`;
+    return `<tr><td class="text-muted text-mono">${t}</td><td class="text-mono">${l.model}${keyTag}</td><td class="text-muted">${l.backend}</td><td>${l.latency_ms}ms</td><td>${tok}</td><td class="${sc}">${l.status}</td></tr>${errRow}`;
   }).join('') || '<tr><td colspan="6" class="text-muted" style="text-align:center;padding:24px">No requests yet</td></tr>';
 }
 
@@ -175,6 +176,7 @@ function switchTab(name, el) {
   if (el) el.classList.add('active');
   if (name === 'logs') loadLogs();
   if (name === 'stats') loadStats('7d');
+  if (name === 'keys') loadKeys();
   if (name === 'config') loadConfig();
 }
 
@@ -441,6 +443,59 @@ function downloadImage(index) {
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
+}
+
+async function loadKeys() {
+  const r = await apiFetch('/api/keys');
+  const d = await r.json();
+  const body = document.getElementById('keys-body');
+  if (!d.keys || !d.keys.length) {
+    body.innerHTML = '<tr><td colspan="7" class="text-muted" style="text-align:center;padding:20px">No API keys yet — create one above</td></tr>';
+    return;
+  }
+  body.innerHTML = d.keys.map(k => {
+    const limitStr = k.token_limit_daily ? k.token_limit_daily.toLocaleString() : '∞';
+    const pct = k.token_limit_daily ? Math.round((k.tokens_today || 0) / k.token_limit_daily * 100) : 0;
+    const limitColor = pct > 90 ? 'var(--red)' : pct > 70 ? 'var(--yellow)' : '';
+    return '<tr>'
+      + '<td class="text-mono">' + k.name + '</td>'
+      + '<td class="text-muted text-mono" style="font-size:11px">' + k.key + '</td>'
+      + '<td>' + (k.request_count || 0).toLocaleString() + '</td>'
+      + '<td style="' + (limitColor ? 'color:'+limitColor : '') + '">' + (k.tokens_today || 0).toLocaleString() + '</td>'
+      + '<td>' + (k.total_tokens || 0).toLocaleString() + '</td>'
+      + '<td>' + limitStr + '</td>'
+      + '<td><button class="btn-delete" onclick="deleteKey(\'' + k.id + '\')">&times;</button></td>'
+      + '</tr>';
+  }).join('');
+}
+
+function openCreateKey() {
+  document.getElementById('create-key-form').style.display = '';
+  document.getElementById('key-created').style.display = 'none';
+  document.getElementById('key-name').value = '';
+  document.getElementById('key-limit').value = '0';
+}
+
+async function submitCreateKey() {
+  const name = document.getElementById('key-name').value.trim();
+  if (!name) return;
+  const limit = parseInt(document.getElementById('key-limit').value) || 0;
+  const r = await apiFetch('/api/keys', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({name: name, token_limit_daily: limit})
+  });
+  const d = await r.json();
+  if (d.key) {
+    document.getElementById('key-created').style.display = '';
+    document.getElementById('key-created-value').textContent = d.key.key;
+    loadKeys();
+  }
+}
+
+async function deleteKey(id) {
+  if (!confirm('Delete this API key?')) return;
+  await apiFetch('/api/keys/' + id, {method: 'DELETE'});
+  loadKeys();
 }
 
 loadStatus();

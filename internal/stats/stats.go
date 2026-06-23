@@ -21,6 +21,15 @@ type RequestLog struct {
 	CompletionTokens int       `json:"completion_tokens"`
 	Stream           bool      `json:"stream"`
 	Error            string    `json:"error,omitempty"`
+	APIKeyName       string    `json:"api_key_name,omitempty"`
+}
+
+type KeyStats struct {
+	KeyName         string `json:"key_name"`
+	RequestCount    int    `json:"request_count"`
+	TotalTokens     int    `json:"total_tokens"`
+	ErrorCount      int    `json:"error_count"`
+	TokensToday     int    `json:"tokens_today"`
 }
 
 type ModelStats struct {
@@ -77,20 +86,26 @@ func migrate(db *sql.DB) error {
 			prompt_tokens     INTEGER DEFAULT 0,
 			completion_tokens INTEGER DEFAULT 0,
 			stream            BOOLEAN DEFAULT 0,
-			error             TEXT DEFAULT ''
+			error             TEXT DEFAULT '',
+			api_key_name      TEXT DEFAULT ''
 		);
 		CREATE INDEX IF NOT EXISTS idx_logs_time ON request_logs(time);
 		CREATE INDEX IF NOT EXISTS idx_logs_model ON request_logs(model);
 	`)
-	return err
+	if err != nil {
+		return err
+	}
+	// Add api_key_name column if missing (existing DBs)
+	db.Exec("ALTER TABLE request_logs ADD COLUMN api_key_name TEXT DEFAULT ''")
+	return nil
 }
 
 func (d *DB) Record(log *RequestLog) error {
 	_, err := d.db.Exec(`
-		INSERT INTO request_logs (time, model, backend, latency_ms, status, prompt_tokens, completion_tokens, stream, error)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		INSERT INTO request_logs (time, model, backend, latency_ms, status, prompt_tokens, completion_tokens, stream, error, api_key_name)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		log.Time.UTC().Format(time.RFC3339), log.Model, log.Backend, log.LatencyMs,
-		log.Status, log.PromptTokens, log.CompletionTokens, log.Stream, log.Error,
+		log.Status, log.PromptTokens, log.CompletionTokens, log.Stream, log.Error, log.APIKeyName,
 	)
 	return err
 }
@@ -104,7 +119,7 @@ func (d *DB) QueryLogs(limit, offset int) ([]RequestLog, int, error) {
 	d.db.QueryRow("SELECT COUNT(*) FROM request_logs").Scan(&total)
 
 	rows, err := d.db.Query(`
-		SELECT id, time, model, backend, latency_ms, status, prompt_tokens, completion_tokens, stream, error
+		SELECT id, time, model, backend, latency_ms, status, prompt_tokens, completion_tokens, stream, error, api_key_name
 		FROM request_logs ORDER BY id DESC LIMIT ? OFFSET ?`, limit, offset)
 	if err != nil {
 		return nil, 0, err
@@ -116,7 +131,7 @@ func (d *DB) QueryLogs(limit, offset int) ([]RequestLog, int, error) {
 		var l RequestLog
 		var t string
 		if err := rows.Scan(&l.ID, &t, &l.Model, &l.Backend, &l.LatencyMs, &l.Status,
-			&l.PromptTokens, &l.CompletionTokens, &l.Stream, &l.Error); err != nil {
+			&l.PromptTokens, &l.CompletionTokens, &l.Stream, &l.Error, &l.APIKeyName); err != nil {
 			continue
 		}
 		l.Time, _ = time.Parse(time.RFC3339, t)
@@ -176,6 +191,45 @@ func (d *DB) StatsByDay(daysBack int) ([]DailyStats, error) {
 		result = append(result, s)
 	}
 	return result, nil
+}
+
+func (d *DB) StatsByKey() ([]KeyStats, error) {
+	rows, err := d.db.Query(`
+		SELECT api_key_name,
+			COUNT(*),
+			COALESCE(SUM(prompt_tokens + completion_tokens), 0),
+			COALESCE(SUM(CASE WHEN status >= 400 THEN 1 ELSE 0 END), 0)
+		FROM request_logs
+		WHERE api_key_name != ''
+		GROUP BY api_key_name
+		ORDER BY COUNT(*) DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	today := time.Now().UTC().Format("2006-01-02")
+	var result []KeyStats
+	for rows.Next() {
+		var s KeyStats
+		rows.Scan(&s.KeyName, &s.RequestCount, &s.TotalTokens, &s.ErrorCount)
+		d.db.QueryRow(`
+			SELECT COALESCE(SUM(prompt_tokens + completion_tokens), 0)
+			FROM request_logs WHERE api_key_name = ? AND date(time) = ?`,
+			s.KeyName, today).Scan(&s.TokensToday)
+		result = append(result, s)
+	}
+	return result, nil
+}
+
+func (d *DB) TokensTodayForKey(keyName string) int {
+	today := time.Now().UTC().Format("2006-01-02")
+	var tokens int
+	d.db.QueryRow(`
+		SELECT COALESCE(SUM(prompt_tokens + completion_tokens), 0)
+		FROM request_logs WHERE api_key_name = ? AND date(time) = ?`,
+		keyName, today).Scan(&tokens)
+	return tokens
 }
 
 func (d *DB) TotalStats() (requests int, tokens int, err error) {

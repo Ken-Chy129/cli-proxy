@@ -1,4 +1,4 @@
-module github.com/user/cli-proxy
+module github.com/Ken-Chy129/llm-proxy
 
 go 1.25.0
 

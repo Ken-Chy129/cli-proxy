@@ -1,6 +1,14 @@
 #!/bin/bash
-# Deploy cli-proxy to remote server
+# Deploy llm-proxy to remote server
 # Usage: ./deploy.sh
+#
+# MIGRATION NOTE (repo renamed cli-proxy -> llm-proxy, 2026-06):
+#   The remote server still runs under ~/cli-proxy/ (binary, /var/log/cli-proxy.log)
+#   and the data dir is still ~/.cli-proxy (OAuth tokens, stats.db, API keys).
+#   These paths are intentionally LEFT AS-IS here so this script keeps working
+#   against the un-migrated server. To migrate the box to llm-proxy, do a
+#   coordinated switch: stop old process, mv ~/cli-proxy ~/llm-proxy and
+#   mv ~/.cli-proxy ~/.llm-proxy, then update the paths below + token_dir.
 #
 # Required env vars (set in .bashrc/.zshrc):
 #   DEPLOY_SERVER   - server IP

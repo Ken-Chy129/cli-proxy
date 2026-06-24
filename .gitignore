@@ -1,9 +1,9 @@
-cli-proxy
+llm-proxy
 *.db
 .idea/
 *.json
 !config.yaml
 config.yaml
-cli-proxy-linux
-cli-proxy-linux-amd64
+llm-proxy-linux
+llm-proxy-linux-amd64
 .playwright-mcp/

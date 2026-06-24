@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"sync"
 
-	"github.com/user/cli-proxy/internal/types"
+	"github.com/Ken-Chy129/llm-proxy/internal/types"
 )
 
 type accountRecorder struct {

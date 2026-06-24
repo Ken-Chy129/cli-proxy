@@ -37,9 +37,9 @@ open http://localhost:9090
 ### Build from source
 
 ```bash
-go build -o cli-proxy .
+go build -o llm-proxy .
 cp config.example.yaml config.yaml
-./cli-proxy -config config.yaml
+./llm-proxy -config config.yaml
 ```
 
 ## Integration
@@ -59,10 +59,10 @@ Requests pass through natively to Vertex AI / Claude OAuth — thinking blocks, 
 Add to `~/.codex/config.toml`:
 
 ```toml
-model_provider = "cli-proxy"
+model_provider = "llm-proxy"
 model = "gpt-5.5"
 
-[model_providers.cli-proxy]
+[model_providers.llm-proxy]
 name = "CLI Proxy"
 base_url = "https://your-domain/v1"
 env_key = "CLI_PROXY_API_KEY"
@@ -187,12 +187,12 @@ environment:
 
 ```bash
 # Cross-compile
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o cli-proxy-linux .
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o llm-proxy-linux .
 
 # Deploy
-scp cli-proxy-linux root@server:~/cli-proxy/cli-proxy
-scp config.yaml root@server:~/cli-proxy/
-nohup ./cli-proxy -config config.yaml > /var/log/cli-proxy.log 2>&1 &
+scp llm-proxy-linux root@server:~/llm-proxy/llm-proxy
+scp config.yaml root@server:~/llm-proxy/
+nohup ./llm-proxy -config config.yaml > /var/log/llm-proxy.log 2>&1 &
 ```
 
 ## Architecture

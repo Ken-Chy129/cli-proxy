@@ -14,9 +14,9 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/user/cli-proxy/internal/executor"
-	"github.com/user/cli-proxy/internal/router"
-	"github.com/user/cli-proxy/internal/stats"
+	"github.com/Ken-Chy129/llm-proxy/internal/executor"
+	"github.com/Ken-Chy129/llm-proxy/internal/router"
+	"github.com/Ken-Chy129/llm-proxy/internal/stats"
 )
 
 const imageGenTimeout = 5 * time.Minute

@@ -1,5 +1,5 @@
-cli-proxy
-cli-proxy-linux
+llm-proxy
+llm-proxy-linux
 *.db
 *.json
 !config.example.yaml

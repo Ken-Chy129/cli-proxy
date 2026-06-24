@@ -5,7 +5,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/user/cli-proxy/internal/executor"
+	"github.com/Ken-Chy129/llm-proxy/internal/executor"
 )
 
 type BackendChecker interface {

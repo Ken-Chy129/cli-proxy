@@ -14,10 +14,10 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	"github.com/user/cli-proxy/internal/executor"
-	"github.com/user/cli-proxy/internal/router"
-	"github.com/user/cli-proxy/internal/stats"
-	"github.com/user/cli-proxy/internal/types"
+	"github.com/Ken-Chy129/llm-proxy/internal/executor"
+	"github.com/Ken-Chy129/llm-proxy/internal/router"
+	"github.com/Ken-Chy129/llm-proxy/internal/stats"
+	"github.com/Ken-Chy129/llm-proxy/internal/types"
 )
 
 type ResponsesHandler struct {

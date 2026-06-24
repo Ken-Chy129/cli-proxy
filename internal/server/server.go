@@ -5,13 +5,13 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/user/cli-proxy/internal/auth"
-	"github.com/user/cli-proxy/internal/config"
-	"github.com/user/cli-proxy/internal/dashboard"
-	"github.com/user/cli-proxy/internal/executor"
-	"github.com/user/cli-proxy/internal/handler"
-	"github.com/user/cli-proxy/internal/router"
-	"github.com/user/cli-proxy/internal/stats"
+	"github.com/Ken-Chy129/llm-proxy/internal/auth"
+	"github.com/Ken-Chy129/llm-proxy/internal/config"
+	"github.com/Ken-Chy129/llm-proxy/internal/dashboard"
+	"github.com/Ken-Chy129/llm-proxy/internal/executor"
+	"github.com/Ken-Chy129/llm-proxy/internal/handler"
+	"github.com/Ken-Chy129/llm-proxy/internal/router"
+	"github.com/Ken-Chy129/llm-proxy/internal/stats"
 )
 
 func Run(cfg *config.Config, r *router.Router, tokenStore *auth.TokenStore, keyStore *auth.KeyStore, statsDB *stats.DB,
@@ -134,10 +134,10 @@ func Run(cfg *config.Config, r *router.Router, tokenStore *auth.TokenStore, keyS
 	addr := fmt.Sprintf(":%d", cfg.Server.Port)
 	fmt.Printf("models: %v\n", r.AllModels())
 	if cfg.Server.CertFile != "" && cfg.Server.KeyFile != "" {
-		fmt.Printf("cli-proxy listening on %s (HTTPS)\n", addr)
+		fmt.Printf("llm-proxy listening on %s (HTTPS)\n", addr)
 		return engine.RunTLS(addr, cfg.Server.CertFile, cfg.Server.KeyFile)
 	}
-	fmt.Printf("cli-proxy listening on %s\n", addr)
+	fmt.Printf("llm-proxy listening on %s\n", addr)
 	return engine.Run(addr)
 }
 

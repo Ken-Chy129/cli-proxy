@@ -13,8 +13,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/user/cli-proxy/internal/config"
-	"github.com/user/cli-proxy/internal/types"
+	"github.com/Ken-Chy129/llm-proxy/internal/config"
+	"github.com/Ken-Chy129/llm-proxy/internal/types"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 )

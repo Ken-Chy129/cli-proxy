@@ -14,9 +14,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/user/cli-proxy/internal/auth"
-	internaltls "github.com/user/cli-proxy/internal/tls"
-	"github.com/user/cli-proxy/internal/types"
+	"github.com/Ken-Chy129/llm-proxy/internal/auth"
+	internaltls "github.com/Ken-Chy129/llm-proxy/internal/tls"
+	"github.com/Ken-Chy129/llm-proxy/internal/types"
 )
 
 type ClaudeOAuthExecutor struct {

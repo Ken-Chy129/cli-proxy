@@ -6,12 +6,12 @@ import (
 	"log"
 	"time"
 
-	"github.com/user/cli-proxy/internal/auth"
-	"github.com/user/cli-proxy/internal/config"
-	"github.com/user/cli-proxy/internal/executor"
-	"github.com/user/cli-proxy/internal/router"
-	"github.com/user/cli-proxy/internal/server"
-	"github.com/user/cli-proxy/internal/stats"
+	"github.com/Ken-Chy129/llm-proxy/internal/auth"
+	"github.com/Ken-Chy129/llm-proxy/internal/config"
+	"github.com/Ken-Chy129/llm-proxy/internal/executor"
+	"github.com/Ken-Chy129/llm-proxy/internal/router"
+	"github.com/Ken-Chy129/llm-proxy/internal/server"
+	"github.com/Ken-Chy129/llm-proxy/internal/stats"
 )
 
 func main() {

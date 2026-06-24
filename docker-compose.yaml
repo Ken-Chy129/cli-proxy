@@ -1,7 +1,7 @@
 services:
-  cli-proxy:
+  llm-proxy:
     build: .
-    container_name: cli-proxy
+    container_name: llm-proxy
     ports:
       - "9090:9090"
     volumes:

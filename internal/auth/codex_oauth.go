@@ -14,7 +14,7 @@ import (
 	"sync"
 	"time"
 
-	internaltls "github.com/user/cli-proxy/internal/tls"
+	internaltls "github.com/Ken-Chy129/llm-proxy/internal/tls"
 )
 
 const (

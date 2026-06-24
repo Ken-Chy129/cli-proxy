@@ -6,3 +6,4 @@ cli-proxy
 config.yaml
 cli-proxy-linux
 cli-proxy-linux-amd64
+.playwright-mcp/

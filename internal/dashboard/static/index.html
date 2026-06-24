@@ -3,24 +3,35 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CLI Proxy</title>
+<title>LLM-Proxy · console</title>
+<link rel="preload" href="/static/fonts/chakra-petch-700.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/static/fonts/ibm-plex-mono-400.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
 <div class="container">
-  <div class="header">
-    <h1>CLI Proxy</h1>
-    <div class="header-stats">
-      <div class="header-stat">
-        <div class="header-stat-value" id="total-requests">-</div>
-        <div class="header-stat-label">Requests</div>
+  <header class="masthead">
+    <div class="brand">
+      <span class="brand-led"></span>
+      <span class="brand-mark">LLM-PROXY</span>
+      <span class="brand-sub">// multi-backend console</span>
+      <span class="cursor"></span>
+    </div>
+    <div class="readouts">
+      <div class="readout">
+        <span class="readout-label">REQUESTS</span>
+        <span class="readout-value" id="total-requests">-</span>
       </div>
-      <div class="header-stat">
-        <div class="header-stat-value" id="total-tokens">-</div>
-        <div class="header-stat-label">Tokens</div>
+      <div class="readout">
+        <span class="readout-label">TOKENS</span>
+        <span class="readout-value" id="total-tokens">-</span>
+      </div>
+      <div class="readout">
+        <span class="readout-label">SYSTEM</span>
+        <span class="readout-value sys"><span class="dot dot-green"></span>ONLINE</span>
       </div>
     </div>
-  </div>
+  </header>
 
   <div class="tabs">
     <div class="tab active" onclick="switchTab('backends',this)">Backends</div>
@@ -163,12 +174,14 @@
 
   <!-- Keys Tab -->
   <div id="tab-keys" class="hidden">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-      <h3 style="font-size:14px">API Keys</h3>
-      <button class="btn-add" onclick="openCreateKey()">+ Create Key</button>
+    <div class="panel">
+      <div class="panel-header">
+        <span>API Keys</span>
+        <button class="btn-add" style="margin-top:0" onclick="openCreateKey()">+ Create Key</button>
+      </div>
+      <table><thead><tr><th>Name</th><th>Key</th><th>Requests</th><th>Tokens Today</th><th>Total Tokens</th><th>Daily Limit</th><th>Actions</th></tr></thead>
+      <tbody id="keys-body"></tbody></table>
     </div>
-    <table><thead><tr><th>Name</th><th>Key</th><th>Requests</th><th>Tokens Today</th><th>Total Tokens</th><th>Daily Limit</th><th>Actions</th></tr></thead>
-    <tbody id="keys-body"></tbody></table>
   </div>
 
   <!-- Config Tab -->

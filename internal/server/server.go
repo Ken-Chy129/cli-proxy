@@ -146,34 +146,46 @@ func loginPage() gin.HandlerFunc {
 		errMsg := c.Query("error")
 		errHTML := ""
 		if errMsg != "" {
-			errHTML = `<div style="color:var(--red);font-size:13px;margin-bottom:12px">` + errMsg + `</div>`
+			errHTML = `<div class="err">! ` + errMsg + `</div>`
 		}
 		c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(`<!DOCTYPE html>
-<html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>CLI Proxy - Login</title>
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>LLM-Proxy · authenticate</title>
 <style>
-:root{--bg-0:#0a0a0f;--bg-1:#12121a;--border:#2a2a3e;--text-0:#eeeef2;--text-2:#707088;--accent:#5b8aff;--accent-dim:#3a5ccc;--red:#f87171}
+@font-face{font-family:'Chakra Petch';font-weight:600;font-display:swap;src:url('/static/fonts/chakra-petch-600.woff2') format('woff2')}
+@font-face{font-family:'Chakra Petch';font-weight:700;font-display:swap;src:url('/static/fonts/chakra-petch-700.woff2') format('woff2')}
+@font-face{font-family:'IBM Plex Mono';font-weight:400;font-display:swap;src:url('/static/fonts/ibm-plex-mono-400.woff2') format('woff2')}
+@font-face{font-family:'IBM Plex Mono';font-weight:500;font-display:swap;src:url('/static/fonts/ibm-plex-mono-500.woff2') format('woff2')}
+:root{--bg-0:#080a09;--bg-1:#0e1110;--bg-3:#1b201d;--border:#242a27;--border-h:#39423d;--text-0:#e9efe9;--text-1:#97a39c;--text-2:#5d665f;--accent:#a3e635;--accent-rgb:163,230,53;--accent-dim:#6f9c24;--red:#ff5f49;--mono:'IBM Plex Mono',ui-monospace,Menlo,monospace;--display:'Chakra Petch',var(--mono)}
 *{margin:0;padding:0;box-sizing:border-box}
-body{background:var(--bg-0);color:var(--text-0);font-family:-apple-system,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh}
-.login-card{background:var(--bg-1);border:1px solid var(--border);border-radius:12px;padding:32px;width:360px}
-h2{font-size:18px;font-weight:600;margin-bottom:6px}
-.subtitle{color:var(--text-2);font-size:13px;margin-bottom:24px}
-label{display:block;font-size:12px;color:var(--text-2);margin-bottom:4px}
-input{display:block;width:100%;background:var(--bg-0);border:1px solid var(--border);color:var(--text-0);border-radius:6px;padding:8px 12px;font-size:14px;margin-bottom:16px;font-family:inherit}
-input:focus{outline:none;border-color:var(--accent)}
-button{width:100%;padding:10px;background:var(--accent);color:#fff;border:none;border-radius:6px;font-size:14px;font-weight:500;cursor:pointer}
-button:hover{background:var(--accent-dim)}
+body{background-color:var(--bg-0);background-image:radial-gradient(900px 500px at 80% -10%,rgba(var(--accent-rgb),0.07),transparent 62%),linear-gradient(rgba(var(--accent-rgb),0.022) 1px,transparent 1px),linear-gradient(90deg,rgba(var(--accent-rgb),0.022) 1px,transparent 1px);background-size:auto,44px 44px,44px 44px;color:var(--text-0);font-family:var(--mono);display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px}
+body::after{content:'';position:fixed;inset:0;pointer-events:none;background:repeating-linear-gradient(0deg,rgba(0,0,0,0.16) 0 1px,transparent 1px 3px),radial-gradient(120% 90% at 50% 0%,transparent 60%,rgba(0,0,0,0.5) 100%);mix-blend-mode:multiply;opacity:.55}
+.login-card{position:relative;background:linear-gradient(180deg,var(--bg-1),var(--bg-0));border:1px solid var(--border-h);border-radius:3px;padding:34px 30px;width:380px;max-width:92vw;box-shadow:0 30px 90px -34px #000,0 0 0 1px rgba(var(--accent-rgb),0.05);z-index:1}
+.login-card::before{content:'';position:absolute;top:8px;left:8px;width:15px;height:15px;border-top:1px solid var(--accent);border-left:1px solid var(--accent);opacity:.6}
+.login-card::after{content:'';position:absolute;bottom:8px;right:8px;width:15px;height:15px;border-bottom:1px solid var(--accent);border-right:1px solid var(--accent);opacity:.6}
+.brand{display:flex;align-items:center;gap:11px;margin-bottom:6px}
+.led{width:9px;height:9px;border-radius:50%;background:var(--accent);box-shadow:0 0 10px var(--accent),0 0 2px #fff;animation:beat 2.4s ease-in-out infinite}
+h2{font-family:var(--display);font-weight:700;font-size:22px;letter-spacing:3px;text-shadow:0 0 18px rgba(var(--accent-rgb),0.25)}
+.subtitle{color:var(--text-2);font-size:12px;letter-spacing:1px;margin-bottom:26px}
+.subtitle::before{content:'// '}
+.err{color:var(--red);font-size:12px;margin-bottom:14px;padding:8px 11px;border:1px solid rgba(255,95,73,0.4);background:rgba(255,95,73,0.1);border-radius:2px;font-family:var(--mono)}
+label{display:block;font-family:var(--display);font-size:10px;font-weight:600;letter-spacing:1.5px;text-transform:uppercase;color:var(--text-2);margin-bottom:6px}
+input{display:block;width:100%;background:var(--bg-0);border:1px solid var(--border);color:var(--text-0);border-radius:2px;padding:10px 13px;font-size:14px;margin-bottom:18px;font-family:var(--mono)}
+input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+button{width:100%;padding:12px;margin-top:4px;background:var(--accent);color:#0c110a;border:none;border-radius:2px;font-family:var(--display);font-size:13px;font-weight:600;letter-spacing:2px;text-transform:uppercase;cursor:pointer;box-shadow:0 0 18px -4px rgba(var(--accent-rgb),0.5);transition:all .15s}
+button:hover{background:#b6f04f;box-shadow:0 0 26px -2px rgba(var(--accent-rgb),0.7)}
+@keyframes beat{0%,100%{box-shadow:0 0 10px var(--accent),0 0 2px #fff;opacity:1}50%{box-shadow:0 0 4px var(--accent);opacity:.6}}
 </style></head><body>
 <div class="login-card">
-<h2>CLI Proxy</h2>
-<p class="subtitle">Sign in to access the dashboard</p>
+<div class="brand"><span class="led"></span><h2>LLM-PROXY</h2></div>
+<p class="subtitle">multi-backend console · authenticate</p>
 `+errHTML+`
 <form method="POST" action="/login">
 <label>Username</label>
-<input type="text" name="username" required autofocus>
+<input type="text" name="username" required autofocus autocomplete="username">
 <label>Password</label>
-<input type="password" name="password" required>
-<button type="submit">Sign In</button>
+<input type="password" name="password" required autocomplete="current-password">
+<button type="submit">Sign In &rarr;</button>
 </form>
 </div></body></html>`))
 	}

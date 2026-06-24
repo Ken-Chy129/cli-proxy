@@ -58,7 +58,7 @@ type DB struct {
 func Open(dir string) (*DB, error) {
 	if dir == "" {
 		home, _ := os.UserHomeDir()
-		dir = filepath.Join(home, ".cli-proxy")
+		dir = filepath.Join(home, ".llm-proxy")
 	}
 	os.MkdirAll(dir, 0700)
 

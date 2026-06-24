@@ -19,7 +19,7 @@ vertex:
 
 claude_oauth:
   enabled: true
-  # token_dir: "/data"  # for Docker; defaults to ~/.cli-proxy
+  # token_dir: "/data"  # for Docker; defaults to ~/.llm-proxy
   models:
     - "claude-sonnet-4-6-oauth"
     - "claude-opus-4-6-oauth"

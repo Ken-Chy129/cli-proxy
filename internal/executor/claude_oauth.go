@@ -71,6 +71,7 @@ func (e *ClaudeOAuthExecutor) doWithFailover(ctx context.Context, makeReq func(t
 				accountID, until.Format(time.RFC3339), !known, i+1, attempts)
 			if i < attempts-1 {
 				resp.Body.Close()
+				recordAccountFailover(ctx, accountID)
 				lastErr = fmt.Errorf("claude account %s rate-limited (429)", accountID)
 				continue
 			}

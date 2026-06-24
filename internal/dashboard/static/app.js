@@ -148,8 +148,11 @@ async function loadLogs() {
     const sc = l.status < 400 ? 'text-green' : 'text-red';
     const keyTag = l.api_key_name ? '<span style="font-size:10px;color:var(--accent);margin-left:4px">[' + l.api_key_name + ']</span>' : '';
     const acct = l.account || '-';
+    const foTag = l.failover_from
+      ? ` <span style="color:var(--yellow);font-size:10px;cursor:help" title="failed over from: ${l.failover_from}">↩</span>`
+      : '';
     const errRow = l.error ? `<tr><td colspan="7" style="padding:2px 12px 8px;font-size:11px;color:var(--red);border:none">${l.error}</td></tr>` : '';
-    return `<tr><td class="text-muted text-mono">${t}</td><td class="text-mono">${l.model}${keyTag}</td><td class="text-muted">${l.backend}</td><td class="text-muted text-mono" style="font-size:11px" title="${acct}">${acct}</td><td>${l.latency_ms}ms</td><td>${tok}</td><td class="${sc}">${l.status}</td></tr>${errRow}`;
+    return `<tr><td class="text-muted text-mono">${t}</td><td class="text-mono">${l.model}${keyTag}</td><td class="text-muted">${l.backend}</td><td class="text-muted text-mono" style="font-size:11px" title="${acct}${l.failover_from ? ' (failover from ' + l.failover_from + ')' : ''}">${acct}${foTag}</td><td>${l.latency_ms}ms</td><td>${tok}</td><td class="${sc}">${l.status}</td></tr>${errRow}`;
   }).join('') || '<tr><td colspan="6" class="text-muted" style="text-align:center;padding:24px">No requests yet</td></tr>';
 }
 

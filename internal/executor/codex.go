@@ -332,6 +332,7 @@ func (e *CodexExecutor) doStream(ctx context.Context, req *types.ChatCompletionR
 				tokenData.ID, until.Format(time.RFC3339), !known, i+1, attempts)
 			if i < attempts-1 {
 				resp.Body.Close()
+				recordAccountFailover(ctx, tokenData.ID)
 				lastErr = fmt.Errorf("codex account %s rate-limited (429)", tokenData.ID)
 				continue
 			}

@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -52,14 +53,16 @@ func (h *ChatHandler) ChatCompletions(c *gin.Context) {
 	ctx, getAccount := executor.WithAccountRecorder(c.Request.Context())
 	resp, err := exec.Execute(ctx, &req)
 	latency := time.Since(start)
+	account, failedOver := getAccount()
 
 	logEntry := &stats.RequestLog{
-		Time:       time.Now(),
-		Model:      req.Model,
-		Backend:    h.router.BackendName(req.Model),
-		Stream:     false,
-		APIKeyName: apiKeyName(c),
-		Account:    getAccount(),
+		Time:         time.Now(),
+		Model:        req.Model,
+		Backend:      h.router.BackendName(req.Model),
+		Stream:       false,
+		APIKeyName:   apiKeyName(c),
+		Account:      account,
+		FailoverFrom: strings.Join(failedOver, ","),
 	}
 
 	if err != nil {
@@ -96,16 +99,18 @@ func (h *ChatHandler) handleStream(c *gin.Context, exec interface {
 		ctx, getAccount := executor.WithAccountRecorder(c.Request.Context())
 		usage, err := exec.ExecuteStream(ctx, req, w)
 		latency := time.Since(start)
+		account, failedOver := getAccount()
 
 		logEntry := &stats.RequestLog{
-			Time:       time.Now(),
-			Model:      req.Model,
-			Backend:    h.router.BackendName(req.Model),
-			LatencyMs:  latency.Milliseconds(),
-			Stream:     true,
-			Status:     http.StatusOK,
-			APIKeyName: apiKeyName(c),
-			Account:    getAccount(),
+			Time:         time.Now(),
+			Model:        req.Model,
+			Backend:      h.router.BackendName(req.Model),
+			LatencyMs:    latency.Milliseconds(),
+			Stream:       true,
+			Status:       http.StatusOK,
+			APIKeyName:   apiKeyName(c),
+			Account:      account,
+			FailoverFrom: strings.Join(failedOver, ","),
 		}
 		if usage != nil {
 			logEntry.PromptTokens = usage.PromptTokens

@@ -10,23 +10,25 @@ import (
 )
 
 type accountRecorder struct {
-	mu      sync.Mutex
-	account string
+	mu         sync.Mutex
+	account    string   // the account that ultimately served (or last tried)
+	failedOver []string // accounts that 429'd and were skipped before the final one
 }
 
 type ctxAccountKey struct{}
 
 // WithAccountRecorder returns a derived context that captures which upstream
 // account an executor selects while handling the request, plus a getter to read
-// the recorded account afterwards (for request logging). Returns "" if the
-// executor never recorded one.
-func WithAccountRecorder(ctx context.Context) (context.Context, func() string) {
+// the result afterwards (for request logging): the serving account, and the
+// ordered list of accounts that were rate-limited and failed over from. Both are
+// empty if the executor never recorded anything.
+func WithAccountRecorder(ctx context.Context) (context.Context, func() (string, []string)) {
 	r := &accountRecorder{}
 	ctx = context.WithValue(ctx, ctxAccountKey{}, r)
-	return ctx, func() string {
+	return ctx, func() (string, []string) {
 		r.mu.Lock()
 		defer r.mu.Unlock()
-		return r.account
+		return r.account, r.failedOver
 	}
 }
 
@@ -36,6 +38,16 @@ func recordAccount(ctx context.Context, account string) {
 	if r, ok := ctx.Value(ctxAccountKey{}).(*accountRecorder); ok {
 		r.mu.Lock()
 		r.account = account
+		r.mu.Unlock()
+	}
+}
+
+// recordAccountFailover notes that an account was rate-limited and the request
+// is failing over to another account. No-op when the context carries no recorder.
+func recordAccountFailover(ctx context.Context, account string) {
+	if r, ok := ctx.Value(ctxAccountKey{}).(*accountRecorder); ok {
+		r.mu.Lock()
+		r.failedOver = append(r.failedOver, account)
 		r.mu.Unlock()
 	}
 }

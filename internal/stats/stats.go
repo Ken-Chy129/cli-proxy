@@ -22,6 +22,7 @@ type RequestLog struct {
 	Stream           bool      `json:"stream"`
 	Error            string    `json:"error,omitempty"`
 	APIKeyName       string    `json:"api_key_name,omitempty"`
+	Account          string    `json:"account,omitempty"` // upstream account (email/id) that served the request
 }
 
 type KeyStats struct {
@@ -87,7 +88,8 @@ func migrate(db *sql.DB) error {
 			completion_tokens INTEGER DEFAULT 0,
 			stream            BOOLEAN DEFAULT 0,
 			error             TEXT DEFAULT '',
-			api_key_name      TEXT DEFAULT ''
+			api_key_name      TEXT DEFAULT '',
+			account           TEXT DEFAULT ''
 		);
 		CREATE INDEX IF NOT EXISTS idx_logs_time ON request_logs(time);
 		CREATE INDEX IF NOT EXISTS idx_logs_model ON request_logs(model);
@@ -97,15 +99,17 @@ func migrate(db *sql.DB) error {
 	}
 	// Add api_key_name column if missing (existing DBs)
 	db.Exec("ALTER TABLE request_logs ADD COLUMN api_key_name TEXT DEFAULT ''")
+	// Add account column if missing (existing DBs)
+	db.Exec("ALTER TABLE request_logs ADD COLUMN account TEXT DEFAULT ''")
 	return nil
 }
 
 func (d *DB) Record(log *RequestLog) error {
 	_, err := d.db.Exec(`
-		INSERT INTO request_logs (time, model, backend, latency_ms, status, prompt_tokens, completion_tokens, stream, error, api_key_name)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		INSERT INTO request_logs (time, model, backend, latency_ms, status, prompt_tokens, completion_tokens, stream, error, api_key_name, account)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		log.Time.UTC().Format(time.RFC3339), log.Model, log.Backend, log.LatencyMs,
-		log.Status, log.PromptTokens, log.CompletionTokens, log.Stream, log.Error, log.APIKeyName,
+		log.Status, log.PromptTokens, log.CompletionTokens, log.Stream, log.Error, log.APIKeyName, log.Account,
 	)
 	return err
 }
@@ -119,7 +123,7 @@ func (d *DB) QueryLogs(limit, offset int) ([]RequestLog, int, error) {
 	d.db.QueryRow("SELECT COUNT(*) FROM request_logs").Scan(&total)
 
 	rows, err := d.db.Query(`
-		SELECT id, time, model, backend, latency_ms, status, prompt_tokens, completion_tokens, stream, error, api_key_name
+		SELECT id, time, model, backend, latency_ms, status, prompt_tokens, completion_tokens, stream, error, api_key_name, account
 		FROM request_logs ORDER BY id DESC LIMIT ? OFFSET ?`, limit, offset)
 	if err != nil {
 		return nil, 0, err
@@ -131,7 +135,7 @@ func (d *DB) QueryLogs(limit, offset int) ([]RequestLog, int, error) {
 		var l RequestLog
 		var t string
 		if err := rows.Scan(&l.ID, &t, &l.Model, &l.Backend, &l.LatencyMs, &l.Status,
-			&l.PromptTokens, &l.CompletionTokens, &l.Stream, &l.Error, &l.APIKeyName); err != nil {
+			&l.PromptTokens, &l.CompletionTokens, &l.Stream, &l.Error, &l.APIKeyName, &l.Account); err != nil {
 			continue
 		}
 		l.Time, _ = time.Parse(time.RFC3339, t)

@@ -119,7 +119,7 @@
         <button class="btn btn-secondary" style="padding:4px 10px;font-size:12px" onclick="loadLogs()">Refresh</button>
       </div>
       <table>
-        <thead><tr><th>Time</th><th>Model</th><th>Backend</th><th>Latency</th><th>Tokens</th><th>Status</th></tr></thead>
+        <thead><tr><th>Time</th><th>Model</th><th>Backend</th><th>Account</th><th>Latency</th><th>Tokens</th><th>Status</th></tr></thead>
         <tbody id="log-body"></tbody>
       </table>
       <div class="pagination">
@@ -169,24 +169,42 @@
     </div>
     <table><thead><tr><th>Name</th><th>Key</th><th>Requests</th><th>Tokens Today</th><th>Total Tokens</th><th>Daily Limit</th><th>Actions</th></tr></thead>
     <tbody id="keys-body"></tbody></table>
-    <div id="create-key-form" style="display:none;margin-top:12px;padding:12px;border:1px solid var(--border);border-radius:8px">
-      <div style="display:flex;gap:8px;align-items:end;flex-wrap:wrap">
-        <div><label style="font-size:11px;color:var(--text-2)">Name</label><input id="key-name" style="width:160px" placeholder="e.g. team-alice"></div>
-        <div><label style="font-size:11px;color:var(--text-2)">Daily Token Limit (0=unlimited)</label><input id="key-limit" type="number" style="width:120px" value="0"></div>
-        <button class="btn btn-primary" style="padding:6px 16px;font-size:12px" onclick="submitCreateKey()">Create</button>
-        <button class="btn btn-secondary" style="padding:6px 12px;font-size:12px" onclick="document.getElementById('create-key-form').style.display='none'">Cancel</button>
-      </div>
-      <div id="key-created" style="display:none;margin-top:8px;padding:8px;background:var(--bg-0);border-radius:6px;font-size:12px">
-        <div style="color:var(--green);margin-bottom:4px">Key created! Copy it now — it won't be shown again in full.</div>
-        <code id="key-created-value" style="word-break:break-all"></code>
-      </div>
-    </div>
   </div>
 
   <!-- Config Tab -->
   <div id="tab-config" class="hidden">
     <div class="panel">
       <pre class="config-display" id="config-display"></pre>
+    </div>
+  </div>
+</div>
+
+<!-- Create API Key Modal -->
+<div class="modal-overlay" id="create-key-modal">
+  <div class="modal">
+    <h3>Create API Key</h3>
+    <div id="create-key-fields">
+      <div class="modal-fields" style="flex-direction:column;gap:14px">
+        <div>
+          <label>Name</label>
+          <input id="key-name" placeholder="e.g. team-alice" autocomplete="off">
+        </div>
+        <div>
+          <label>Daily Token Limit <span class="text-muted">(0 = unlimited)</span></label>
+          <input id="key-limit" type="number" min="0" value="0">
+        </div>
+      </div>
+    </div>
+    <div id="key-created" style="display:none;margin-top:14px;padding:12px;background:var(--bg-0);border-radius:8px;font-size:12px">
+      <div style="color:var(--green);margin-bottom:8px">Key created — copy it now.</div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <code id="key-created-value" style="word-break:break-all;flex:1"></code>
+        <button class="btn btn-secondary" id="key-copy-btn" style="padding:5px 12px;font-size:12px;flex-shrink:0" onclick="copyCreatedKey()">Copy</button>
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" onclick="closeCreateKey()">Cancel</button>
+      <button class="btn btn-primary" id="create-key-submit" onclick="submitCreateKey()">Create</button>
     </div>
   </div>
 </div>

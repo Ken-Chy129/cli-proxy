@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -268,60 +269,89 @@ func (e *CodexExecutor) ExecuteRawStream(ctx context.Context, rawBody []byte, w 
 }
 
 func (e *CodexExecutor) doStream(ctx context.Context, req *types.ChatCompletionRequest, w io.Writer) error {
-	tokenData := e.oauth.GetTokenData(ctx)
-	if tokenData == nil {
-		return fmt.Errorf("codex not authenticated")
-	}
-	token := tokenData.AccessToken
-
-	// Auto-refresh stale quota (>12h) in background
-	if auth.QuotaCache.IsStale("codex:"+tokenData.ID, 12*time.Hour) {
-		go e.oauth.FetchQuotaForAccountByID(context.Background(), tokenData.ID)
-	}
-
 	cr := e.toCodexRequest(req)
 	body, _ := json.Marshal(cr)
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, codexBaseURL+"/codex/responses", bytes.NewReader(body))
-	if err != nil {
+	// One pass over the account pool: on 429, mark the account rate-limited
+	// (using the upstream reset time, or a 60s default) and try the next.
+	attempts := len(e.oauth.Store().AllForProvider("codex"))
+	if attempts < 1 {
+		attempts = 1
+	}
+	var lastErr error
+	for i := 0; i < attempts; i++ {
+		tokenData := e.oauth.GetTokenData(ctx)
+		if tokenData == nil {
+			return fmt.Errorf("codex not authenticated")
+		}
+		recordAccount(ctx, tokenData.ID)
+		token := tokenData.AccessToken
+
+		// Auto-refresh stale quota (>12h) in background
+		if auth.QuotaCache.IsStale("codex:"+tokenData.ID, 12*time.Hour) {
+			go e.oauth.FetchQuotaForAccountByID(context.Background(), tokenData.ID)
+		}
+
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, codexBaseURL+"/codex/responses", bytes.NewReader(body))
+		if err != nil {
+			return err
+		}
+
+		installationID := uuid.New().String()
+		httpReq.Header.Set("Authorization", "Bearer "+token)
+		httpReq.Header.Set("Content-Type", "application/json")
+		httpReq.Header.Set("Accept", "text/event-stream")
+		httpReq.Header.Set("User-Agent", codexUserAgent)
+		httpReq.Header.Set("OpenAI-Beta", "responses_websockets=2026-02-06")
+		httpReq.Header.Set("x-openai-internal-codex-residency", "us")
+		httpReq.Header.Set("x-codex-installation-id", installationID)
+		httpReq.Header.Set("x-client-request-id", uuid.New().String())
+
+		resp, err := internaltls.NewAnthropicHTTPClient().Do(httpReq)
+		if err != nil {
+			lastErr = fmt.Errorf("codex request: %w", err)
+			continue
+		}
+
+		// Extract quota from response headers and store per-account
+		if quota := auth.ParseCodexRateLimitHeaders(resp.Header); quota != nil {
+			jwtInfo := auth.ParseJWT(tokenData.AccessToken)
+			quota.AccountID = tokenData.ID
+			quota.Email = tokenData.Email
+			if quota.Email == "" {
+				quota.Email = jwtInfo.Email
+			}
+			quota.PlanType = jwtInfo.PlanType
+			auth.QuotaCache.Set("codex:"+tokenData.ID, quota)
+		}
+
+		if resp.StatusCode == http.StatusTooManyRequests {
+			until, known := auth.RateLimitResetTime(resp.Header, 60*time.Second)
+			e.oauth.Store().MarkRateLimited("codex", tokenData.ID, until, !known)
+			log.Printf("[failover] codex account %s rate-limited until %s (estimated=%t); %d/%d attempts used",
+				tokenData.ID, until.Format(time.RFC3339), !known, i+1, attempts)
+			if i < attempts-1 {
+				resp.Body.Close()
+				lastErr = fmt.Errorf("codex account %s rate-limited (429)", tokenData.ID)
+				continue
+			}
+			// Final attempt: surface the real 429 below.
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			respBody, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			return fmt.Errorf("codex error %d: %s", resp.StatusCode, string(respBody))
+		}
+
+		_, err = io.Copy(w, resp.Body)
+		resp.Body.Close()
 		return err
 	}
-
-	installationID := uuid.New().String()
-	httpReq.Header.Set("Authorization", "Bearer "+token)
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Accept", "text/event-stream")
-	httpReq.Header.Set("User-Agent", codexUserAgent)
-	httpReq.Header.Set("OpenAI-Beta", "responses_websockets=2026-02-06")
-	httpReq.Header.Set("x-openai-internal-codex-residency", "us")
-	httpReq.Header.Set("x-codex-installation-id", installationID)
-	httpReq.Header.Set("x-client-request-id", uuid.New().String())
-
-	resp, err := internaltls.NewAnthropicHTTPClient().Do(httpReq)
-	if err != nil {
-		return fmt.Errorf("codex request: %w", err)
+	if lastErr == nil {
+		lastErr = fmt.Errorf("codex: no accounts available")
 	}
-	defer resp.Body.Close()
-
-	// Extract quota from response headers and store per-account
-	if quota := auth.ParseCodexRateLimitHeaders(resp.Header); quota != nil {
-		jwtInfo := auth.ParseJWT(tokenData.AccessToken)
-		quota.AccountID = tokenData.ID
-		quota.Email = tokenData.Email
-		if quota.Email == "" {
-			quota.Email = jwtInfo.Email
-		}
-		quota.PlanType = jwtInfo.PlanType
-		auth.QuotaCache.Set("codex:"+tokenData.ID, quota)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("codex error %d: %s", resp.StatusCode, string(respBody))
-	}
-
-	_, err = io.Copy(w, resp.Body)
-	return err
+	return lastErr
 }
 
 func (e *CodexExecutor) OpenResponsesStream(ctx context.Context, body []byte) (io.ReadCloser, error) {

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/user/cli-proxy/internal/executor"
 	"github.com/user/cli-proxy/internal/router"
 	"github.com/user/cli-proxy/internal/stats"
 	"github.com/user/cli-proxy/internal/types"
@@ -48,7 +49,8 @@ func (h *ChatHandler) ChatCompletions(c *gin.Context) {
 		return
 	}
 
-	resp, err := exec.Execute(c.Request.Context(), &req)
+	ctx, getAccount := executor.WithAccountRecorder(c.Request.Context())
+	resp, err := exec.Execute(ctx, &req)
 	latency := time.Since(start)
 
 	logEntry := &stats.RequestLog{
@@ -57,6 +59,7 @@ func (h *ChatHandler) ChatCompletions(c *gin.Context) {
 		Backend:    h.router.BackendName(req.Model),
 		Stream:     false,
 		APIKeyName: apiKeyName(c),
+		Account:    getAccount(),
 	}
 
 	if err != nil {
@@ -90,7 +93,8 @@ func (h *ChatHandler) handleStream(c *gin.Context, exec interface {
 	c.Header("Connection", "keep-alive")
 
 	c.Stream(func(w io.Writer) bool {
-		usage, err := exec.ExecuteStream(c.Request.Context(), req, w)
+		ctx, getAccount := executor.WithAccountRecorder(c.Request.Context())
+		usage, err := exec.ExecuteStream(ctx, req, w)
 		latency := time.Since(start)
 
 		logEntry := &stats.RequestLog{
@@ -101,6 +105,7 @@ func (h *ChatHandler) handleStream(c *gin.Context, exec interface {
 			Stream:     true,
 			Status:     http.StatusOK,
 			APIKeyName: apiKeyName(c),
+			Account:    getAccount(),
 		}
 		if usage != nil {
 			logEntry.PromptTokens = usage.PromptTokens

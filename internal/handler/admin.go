@@ -97,13 +97,23 @@ func (h *AdminHandler) Status(c *gin.Context) {
 			if accDisabled {
 				accStatus = "disabled"
 			}
-			accountList = append(accountList, gin.H{
+			acc := gin.H{
 				"id":       t.ID,
 				"email":    info,
 				"status":   accStatus,
 				"expires":  expireInfo,
 				"disabled": accDisabled,
-			})
+			}
+			if until, estimated, active := h.tokenStore.RateLimitInfo(p.name, t.ID); active {
+				if !accDisabled {
+					accStatus = "rate_limited"
+					acc["status"] = accStatus
+				}
+				acc["rate_limited"] = true
+				acc["rate_limited_until"] = until.Format("15:04")
+				acc["rate_limited_estimated"] = estimated
+			}
+			accountList = append(accountList, acc)
 		}
 		if activeCount > 0 {
 			status = "active"

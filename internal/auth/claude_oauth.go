@@ -58,15 +58,28 @@ func NewClaudeOAuth(store *TokenStore) *ClaudeOAuth {
 	}
 }
 
+// Store exposes the underlying token store (for rate-limit failover bookkeeping).
+func (o *ClaudeOAuth) Store() *TokenStore { return o.store }
+
 func (o *ClaudeOAuth) GetToken(ctx context.Context) (string, error) {
+	token, _, err := o.GetTokenWithAccount(ctx)
+	return token, err
+}
+
+// GetTokenWithAccount returns an access token together with the ID of the
+// account it belongs to, so callers can attribute rate-limit failures back to a
+// specific account.
+func (o *ClaudeOAuth) GetTokenWithAccount(ctx context.Context) (string, string, error) {
 	token := o.store.Get("claude")
 	if token == nil {
-		return "", fmt.Errorf("claude not authenticated (%d accounts), visit /auth/claude to login", len(o.store.AllForProvider("claude")))
+		return "", "", fmt.Errorf("claude not authenticated (%d accounts), visit /auth/claude to login", len(o.store.AllForProvider("claude")))
 	}
+	id := token.ID
 	if !token.IsExpired() {
-		return token.AccessToken, nil
+		return token.AccessToken, id, nil
 	}
-	return o.refresh(ctx, token)
+	access, err := o.refresh(ctx, token)
+	return access, id, err
 }
 
 func (o *ClaudeOAuth) refresh(ctx context.Context, token *TokenData) (string, error) {

@@ -241,3 +241,35 @@ func ParseCodexRateLimitHeaders(h http.Header) *QuotaInfo {
 
 	return info
 }
+
+// RateLimitResetTime inspects a 429 response and returns when the account should
+// be retried, plus whether that time came from an authoritative upstream hint
+// (known=true) or is a fallback guess (known=false). It checks, in order:
+// Retry-After (seconds or HTTP-date), anthropic-ratelimit-unified-reset (unix
+// seconds), and x-codex-primary-reset-at (unix seconds). If none parse to a
+// future time it returns now+defaultCooldown with known=false.
+//
+// Note: Anthropic's Claude-OAuth 429s often carry only `x-should-retry: true`
+// and no reset header at all, so for that backend known is usually false and the
+// cooldown is an estimate.
+func RateLimitResetTime(h http.Header, defaultCooldown time.Duration) (time.Time, bool) {
+	now := time.Now()
+	if v := h.Get("Retry-After"); v != "" {
+		if secs, err := strconv.Atoi(v); err == nil && secs > 0 {
+			return now.Add(time.Duration(secs) * time.Second), true
+		}
+		if t, err := http.ParseTime(v); err == nil && t.After(now) {
+			return t, true
+		}
+	}
+	for _, key := range []string{"anthropic-ratelimit-unified-reset", "x-codex-primary-reset-at"} {
+		if v := h.Get(key); v != "" {
+			if ts, err := strconv.ParseFloat(v, 64); err == nil {
+				if t := time.Unix(int64(ts), 0); t.After(now) {
+					return t, true
+				}
+			}
+		}
+	}
+	return now.Add(defaultCooldown), false
+}

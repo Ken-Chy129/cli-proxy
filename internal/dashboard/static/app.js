@@ -21,10 +21,15 @@ async function loadStatus() {
     let accts = '';
     if (b.accounts && b.accounts.length) {
       accts = b.accounts.map(a => {
-        const ad = a.status === 'active' ? 'dot-green' : 'dot-yellow';
+        const ad = a.disabled ? 'dot-gray' : a.rate_limited ? '' : a.status === 'active' ? 'dot-green' : 'dot-yellow';
+        const dotStyle = (!a.disabled && a.rate_limited) ? 'background:var(--red)' : '';
         const toggleAccBtn = `<button class="btn-delete" style="font-size:10px;color:${a.disabled ? 'var(--green)' : 'var(--yellow)'}" onclick="toggleAccount('${b.name}','${a.id}')">${a.disabled ? '▶' : '⏸'}</button>`;
-        return `<div class="account-row" style="${a.disabled ? 'opacity:0.4' : ''}"><span class="dot ${ad}"></span><span class="email">${a.email}</span>`
+        const rlBadge = a.rate_limited
+          ? `<span class="exp" style="color:var(--red)" title="${a.rate_limited_estimated ? 'Rate-limited upstream — no reset time provided, re-checking periodically' : 'Rate-limited upstream until ' + a.rate_limited_until}">limited${a.rate_limited_estimated ? '' : ' ' + a.rate_limited_until}</span>`
+          : '';
+        return `<div class="account-row" style="${a.disabled ? 'opacity:0.4' : ''}"><span class="dot ${ad}" style="${dotStyle}"></span><span class="email">${a.email}</span>`
           + (a.expires ? `<span class="exp">${a.expires}</span>` : '')
+          + rlBadge
           + toggleAccBtn
           + `<button class="btn-delete" onclick="removeAccount('${b.name}','${a.id}')">&times;</button></div>`;
       }).join('');
@@ -142,8 +147,9 @@ async function loadLogs() {
     const tok = (l.prompt_tokens || 0) + (l.completion_tokens || 0);
     const sc = l.status < 400 ? 'text-green' : 'text-red';
     const keyTag = l.api_key_name ? '<span style="font-size:10px;color:var(--accent);margin-left:4px">[' + l.api_key_name + ']</span>' : '';
-    const errRow = l.error ? `<tr><td colspan="6" style="padding:2px 12px 8px;font-size:11px;color:var(--red);border:none">${l.error}</td></tr>` : '';
-    return `<tr><td class="text-muted text-mono">${t}</td><td class="text-mono">${l.model}${keyTag}</td><td class="text-muted">${l.backend}</td><td>${l.latency_ms}ms</td><td>${tok}</td><td class="${sc}">${l.status}</td></tr>${errRow}`;
+    const acct = l.account || '-';
+    const errRow = l.error ? `<tr><td colspan="7" style="padding:2px 12px 8px;font-size:11px;color:var(--red);border:none">${l.error}</td></tr>` : '';
+    return `<tr><td class="text-muted text-mono">${t}</td><td class="text-mono">${l.model}${keyTag}</td><td class="text-muted">${l.backend}</td><td class="text-muted text-mono" style="font-size:11px" title="${acct}">${acct}</td><td>${l.latency_ms}ms</td><td>${tok}</td><td class="${sc}">${l.status}</td></tr>${errRow}`;
   }).join('') || '<tr><td colspan="6" class="text-muted" style="text-align:center;padding:24px">No requests yet</td></tr>';
 }
 
@@ -449,6 +455,15 @@ function downloadImage(index) {
   document.body.removeChild(a);
 }
 
+function copyKeyInline(btn, key) {
+  navigator.clipboard.writeText(key);
+  const prev = btn.innerHTML;
+  btn.innerHTML = '&#x2713;';
+  btn.classList.add('copied');
+  btn.title = 'Copied!';
+  setTimeout(() => { btn.innerHTML = prev; btn.classList.remove('copied'); btn.title = 'Copy key'; }, 1200);
+}
+
 async function loadKeys() {
   const r = await apiFetch('/api/keys');
   const d = await r.json();
@@ -463,26 +478,43 @@ async function loadKeys() {
     const limitColor = pct > 90 ? 'var(--red)' : pct > 70 ? 'var(--yellow)' : '';
     return '<tr>'
       + '<td class="text-mono">' + k.name + '</td>'
-      + '<td class="text-muted text-mono" style="font-size:11px">' + k.key.slice(0,10) + '...' + k.key.slice(-4) + ' <button class="btn-delete" style="font-size:10px;color:var(--accent)" onclick="navigator.clipboard.writeText(\'' + k.key + '\')">&#x2398;</button></td>'
+      + '<td class="text-muted text-mono" style="font-size:11px"><span style="vertical-align:middle">' + k.key.slice(0,10) + '...' + k.key.slice(-4) + '</span> <button class="icon-btn" title="Copy key" onclick="copyKeyInline(this, \'' + k.key + '\')">&#x2398;</button></td>'
       + '<td>' + (k.request_count || 0).toLocaleString() + '</td>'
       + '<td style="' + (limitColor ? 'color:'+limitColor : '') + '">' + (k.tokens_today || 0).toLocaleString() + '</td>'
       + '<td>' + (k.total_tokens || 0).toLocaleString() + '</td>'
       + '<td>' + limitStr + '</td>'
-      + '<td><button class="btn-delete" onclick="deleteKey(\'' + k.id + '\')">&times;</button></td>'
+      + '<td><button class="btn-row" onclick="deleteKey(\'' + k.id + '\')">&#x1F5D1; Delete</button></td>'
       + '</tr>';
   }).join('');
 }
 
 function openCreateKey() {
-  document.getElementById('create-key-form').style.display = '';
   document.getElementById('key-created').style.display = 'none';
+  document.getElementById('create-key-fields').style.display = '';
   document.getElementById('key-name').value = '';
   document.getElementById('key-limit').value = '0';
+  const btn = document.getElementById('create-key-submit');
+  btn.textContent = 'Create';
+  btn.setAttribute('onclick', 'submitCreateKey()');
+  document.getElementById('create-key-modal').classList.add('show');
+  document.getElementById('key-name').focus();
+}
+
+function closeCreateKey() {
+  document.getElementById('create-key-modal').classList.remove('show');
+}
+
+function copyCreatedKey() {
+  const key = document.getElementById('key-created-value').textContent;
+  navigator.clipboard.writeText(key);
+  const btn = document.getElementById('key-copy-btn');
+  btn.textContent = 'Copied';
+  setTimeout(() => { btn.textContent = 'Copy'; }, 1500);
 }
 
 async function submitCreateKey() {
   const name = document.getElementById('key-name').value.trim();
-  if (!name) return;
+  if (!name) { document.getElementById('key-name').focus(); return; }
   const limit = parseInt(document.getElementById('key-limit').value) || 0;
   const r = await apiFetch('/api/keys', {
     method: 'POST', headers: {'Content-Type': 'application/json'},
@@ -490,8 +522,12 @@ async function submitCreateKey() {
   });
   const d = await r.json();
   if (d.key) {
+    document.getElementById('create-key-fields').style.display = 'none';
     document.getElementById('key-created').style.display = '';
     document.getElementById('key-created-value').textContent = d.key.key;
+    const btn = document.getElementById('create-key-submit');
+    btn.textContent = 'Done';
+    btn.setAttribute('onclick', 'closeCreateKey()');
     loadKeys();
   }
 }
@@ -501,6 +537,18 @@ async function deleteKey(id) {
   await apiFetch('/api/keys/' + id, {method: 'DELETE'});
   loadKeys();
 }
+
+// Dismiss any open modal by clicking the overlay backdrop or pressing Esc.
+document.querySelectorAll('.modal-overlay').forEach((overlay) => {
+  overlay.addEventListener('mousedown', (e) => {
+    if (e.target === overlay) overlay.classList.remove('show');
+  });
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    document.querySelectorAll('.modal-overlay.show').forEach((o) => o.classList.remove('show'));
+  }
+});
 
 loadStatus();
 let lastFocusLoad = 0;

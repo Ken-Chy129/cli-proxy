@@ -110,6 +110,9 @@ func NewCodexOAuth(store *TokenStore) *CodexOAuth {
 	return &CodexOAuth{store: store, httpClient: internaltls.NewAnthropicHTTPClient(), ServerPort: 9090}
 }
 
+// Store exposes the underlying token store (for rate-limit failover bookkeeping).
+func (o *CodexOAuth) Store() *TokenStore { return o.store }
+
 func (o *CodexOAuth) GetTokenData(_ context.Context) *TokenData {
 	return o.store.Get("codex")
 }

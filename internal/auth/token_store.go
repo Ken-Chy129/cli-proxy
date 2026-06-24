@@ -49,6 +49,18 @@ type TokenStore struct {
 	accounts map[string][]*TokenData // provider -> accounts
 	counter  atomic.Uint64
 	disabled DisabledState
+	// rateLimited tracks accounts cooling down after an upstream 429.
+	// Keyed by "provider/id". In-memory only (not persisted): a restart clears
+	// it, at worst costing one 429 to re-learn the cooldown.
+	rateLimited map[string]rateLimitEntry
+}
+
+type rateLimitEntry struct {
+	Until time.Time
+	// Estimated is true when the upstream 429 carried no reset hint
+	// (no Retry-After / ratelimit headers) and we applied a default cooldown,
+	// so the Until time is a guess rather than an authoritative reset time.
+	Estimated bool
 }
 
 func NewTokenStore(dir string) *TokenStore {
@@ -57,10 +69,41 @@ func NewTokenStore(dir string) *TokenStore {
 		dir = filepath.Join(home, ".cli-proxy")
 	}
 	os.MkdirAll(dir, 0700)
-	store := &TokenStore{dir: dir, accounts: make(map[string][]*TokenData)}
+	store := &TokenStore{
+		dir:         dir,
+		accounts:    make(map[string][]*TokenData),
+		rateLimited: make(map[string]rateLimitEntry),
+	}
 	store.loadAll()
 	store.loadDisabled()
 	return store
+}
+
+// MarkRateLimited records that an account is rate-limited until the given time,
+// so round-robin selection skips it until then. estimated indicates the Until
+// time is a default guess (upstream gave no reset hint).
+func (s *TokenStore) MarkRateLimited(provider, id string, until time.Time, estimated bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.rateLimited[provider+"/"+id] = rateLimitEntry{Until: until, Estimated: estimated}
+}
+
+// RateLimitInfo returns the active cooldown for an account: the time it becomes
+// usable again, whether that time is an estimate, and whether a cooldown is
+// currently active at all.
+func (s *TokenStore) RateLimitInfo(provider, id string) (until time.Time, estimated, active bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	e, ok := s.rateLimited[provider+"/"+id]
+	if !ok || time.Now().After(e.Until) {
+		return time.Time{}, false, false
+	}
+	return e.Until, e.Estimated, true
+}
+
+func (s *TokenStore) isRateLimitedLocked(provider, id string) bool {
+	e, ok := s.rateLimited[provider+"/"+id]
+	return ok && time.Now().Before(e.Until)
 }
 
 func (s *TokenStore) disabledPath() string {
@@ -168,16 +211,25 @@ func (s *TokenStore) Get(provider string) *TokenData {
 		return nil
 	}
 
-	// Round-robin over active, non-disabled accounts
+	// Round-robin over active, non-disabled, non-rate-limited accounts
 	n := len(list)
 	start := int(s.counter.Add(1)) % n
 	for i := 0; i < n; i++ {
 		idx := (start + i) % n
-		if !list[idx].IsExpired() && !s.isAccountDisabledLocked(provider, list[idx].ID) {
+		if !list[idx].IsExpired() &&
+			!s.isAccountDisabledLocked(provider, list[idx].ID) &&
+			!s.isRateLimitedLocked(provider, list[idx].ID) {
 			return list[idx]
 		}
 	}
-	// All expired/disabled, return first non-disabled so caller can try refresh
+	// All expired/disabled/rate-limited. Prefer a non-disabled account that
+	// isn't rate-limited (so the caller can refresh an expired token); fall
+	// back to any non-disabled account so something is always tried.
+	for _, t := range list {
+		if !s.isAccountDisabledLocked(provider, t.ID) && !s.isRateLimitedLocked(provider, t.ID) {
+			return t
+		}
+	}
 	for _, t := range list {
 		if !s.isAccountDisabledLocked(provider, t.ID) {
 			return t

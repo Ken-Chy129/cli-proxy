@@ -37,6 +37,53 @@ func NewClaudeOAuthExecutor(oauth *auth.ClaudeOAuth, models []string) *ClaudeOAu
 
 func (e *ClaudeOAuthExecutor) Models() []string { return e.models }
 
+// doWithFailover acquires a Claude account, builds a request via makeReq, and
+// sends it. On HTTP 429 it marks that account rate-limited (using the upstream
+// reset time, or a 60s default) and retries with the next account, up to one
+// full pass over the account pool. The 429 from the final attempt is returned
+// to the caller so the client still sees the real upstream error when every
+// account is exhausted.
+func (e *ClaudeOAuthExecutor) doWithFailover(ctx context.Context, makeReq func(token string) (*http.Request, error)) (*http.Response, error) {
+	attempts := len(e.oauth.Store().AllForProvider("claude"))
+	if attempts < 1 {
+		attempts = 1
+	}
+	var lastErr error
+	for i := 0; i < attempts; i++ {
+		token, accountID, err := e.oauth.GetTokenWithAccount(ctx)
+		if err != nil {
+			return nil, err
+		}
+		recordAccount(ctx, accountID)
+		req, err := makeReq(token)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := e.httpClient.Do(req)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		if resp.StatusCode == http.StatusTooManyRequests {
+			until, known := auth.RateLimitResetTime(resp.Header, 60*time.Second)
+			e.oauth.Store().MarkRateLimited("claude", accountID, until, !known)
+			log.Printf("[failover] claude account %s rate-limited until %s (estimated=%t); %d/%d attempts used",
+				accountID, until.Format(time.RFC3339), !known, i+1, attempts)
+			if i < attempts-1 {
+				resp.Body.Close()
+				lastErr = fmt.Errorf("claude account %s rate-limited (429)", accountID)
+				continue
+			}
+			// Final attempt: let the real 429 flow back to the client.
+		}
+		return resp, nil
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("claude oauth: no accounts available")
+	}
+	return nil, lastErr
+}
+
 func (e *ClaudeOAuthExecutor) Execute(ctx context.Context, req *types.ChatCompletionRequest) (*types.ChatCompletionResponse, error) {
 	ar := ToAnthropicRequest(req, req.Model)
 	ar.Stream = false
@@ -44,20 +91,17 @@ func (e *ClaudeOAuthExecutor) Execute(ctx context.Context, req *types.ChatComple
 	ar.Thinking = &types.ThinkingConfig{Type: "adaptive"}
 	ar.MaxTokens = 64000
 
-	token, err := e.oauth.GetToken(ctx)
-	if err != nil {
-		return nil, err
-	}
-
 	body, _ := json.Marshal(ar)
 	body = injectClaudeCodeSystemBlocks(body)
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://api.anthropic.com/v1/messages", bytes.NewReader(body))
-	if err != nil {
-		return nil, err
-	}
-	e.applyHeaders(httpReq, token)
 
-	resp, err := e.httpClient.Do(httpReq)
+	resp, err := e.doWithFailover(ctx, func(token string) (*http.Request, error) {
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://api.anthropic.com/v1/messages", bytes.NewReader(body))
+		if err != nil {
+			return nil, err
+		}
+		e.applyHeaders(httpReq, token)
+		return httpReq, nil
+	})
 	if err != nil {
 		return nil, fmt.Errorf("claude oauth request: %w", err)
 	}
@@ -86,22 +130,19 @@ func (e *ClaudeOAuthExecutor) ExecuteStream(ctx context.Context, req *types.Chat
 	ar.Thinking = &types.ThinkingConfig{Type: "adaptive"}
 	ar.MaxTokens = 64000
 
-	token, err := e.oauth.GetToken(ctx)
-	if err != nil {
-		return nil, err
-	}
-
 	body, _ := json.Marshal(ar)
 	body = injectClaudeCodeSystemBlocks(body)
 	log.Printf("[DEBUG-CHAT] URL=https://api.anthropic.com/v1/messages body=%s", string(body))
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://api.anthropic.com/v1/messages", bytes.NewReader(body))
-	if err != nil {
-		return nil, err
-	}
-	e.applyHeaders(httpReq, token)
-	log.Printf("[DEBUG-CHAT] headers: %v", httpReq.Header)
 
-	resp, err := e.httpClient.Do(httpReq)
+	resp, err := e.doWithFailover(ctx, func(token string) (*http.Request, error) {
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://api.anthropic.com/v1/messages", bytes.NewReader(body))
+		if err != nil {
+			return nil, err
+		}
+		e.applyHeaders(httpReq, token)
+		log.Printf("[DEBUG-CHAT] headers: %v", httpReq.Header)
+		return httpReq, nil
+	})
 	if err != nil {
 		return nil, fmt.Errorf("claude oauth stream request: %w", err)
 	}
@@ -246,19 +287,19 @@ func (e *ClaudeOAuthExecutor) applyHeaders(req *http.Request, token string) {
 }
 
 func (e *ClaudeOAuthExecutor) ExecuteAnthropicRaw(ctx context.Context, body []byte, clientHeaders http.Header) ([]byte, int, error) {
-	token, err := e.oauth.GetToken(ctx)
-	if err != nil {
-		return nil, 0, err
-	}
-
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		"https://api.anthropic.com/v1/messages", bytes.NewReader(body))
-	if err != nil {
-		return nil, 0, err
-	}
-	applyAnthropicPassthroughHeaders(httpReq, token, clientHeaders)
-
-	resp, err := e.httpClient.Do(httpReq)
+	// OAuth tokens require the Claude Code identity/billing system blocks and a
+	// signed body, or Anthropic rejects the request (opaque 429). Idempotent:
+	// requests that already carry the billing header are just re-signed.
+	body = injectClaudeCodeSystemBlocks(body)
+	resp, err := e.doWithFailover(ctx, func(token string) (*http.Request, error) {
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
+			"https://api.anthropic.com/v1/messages", bytes.NewReader(body))
+		if err != nil {
+			return nil, err
+		}
+		applyAnthropicPassthroughHeaders(httpReq, token, clientHeaders)
+		return httpReq, nil
+	})
 	if err != nil {
 		return nil, 0, fmt.Errorf("claude oauth request: %w", err)
 	}
@@ -272,23 +313,11 @@ func (e *ClaudeOAuthExecutor) ExecuteAnthropicRaw(ctx context.Context, body []by
 }
 
 func (e *ClaudeOAuthExecutor) OpenAnthropicStream(ctx context.Context, body []byte, clientHeaders http.Header) (io.ReadCloser, int, error) {
-	token, err := e.oauth.GetToken(ctx)
-	if err != nil {
-		return nil, 0, err
-	}
-
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		"https://api.anthropic.com/v1/messages", bytes.NewReader(body))
-	if err != nil {
-		return nil, 0, err
-	}
-	applyAnthropicPassthroughHeaders(httpReq, token, clientHeaders)
 	if beta := clientHeaders.Get("anthropic-beta"); beta != "" {
 		e.betaMu.Lock()
 		e.lastBetaFlags = beta
 		e.betaMu.Unlock()
 	}
-	log.Printf("[DEBUG-PASSTHROUGH] headers: %v", httpReq.Header)
 	var bodyPeek map[string]json.RawMessage
 	json.Unmarshal(body, &bodyPeek)
 	keys := make([]string, 0, len(bodyPeek))
@@ -297,7 +326,19 @@ func (e *ClaudeOAuthExecutor) OpenAnthropicStream(ctx context.Context, body []by
 	}
 	log.Printf("[DEBUG-PASSTHROUGH] body keys=%v model=%s max_tokens=%s thinking=%s", keys, bodyPeek["model"], bodyPeek["max_tokens"], bodyPeek["thinking"])
 
-	resp, err := e.httpClient.Do(httpReq)
+	// OAuth tokens require the Claude Code identity/billing system blocks and a
+	// signed body, or Anthropic rejects the request (opaque 429). Idempotent.
+	body = injectClaudeCodeSystemBlocks(body)
+	resp, err := e.doWithFailover(ctx, func(token string) (*http.Request, error) {
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
+			"https://api.anthropic.com/v1/messages", bytes.NewReader(body))
+		if err != nil {
+			return nil, err
+		}
+		applyAnthropicPassthroughHeaders(httpReq, token, clientHeaders)
+		log.Printf("[DEBUG-PASSTHROUGH] headers: %v", httpReq.Header)
+		return httpReq, nil
+	})
 	if err != nil {
 		return nil, 0, fmt.Errorf("claude oauth stream request: %w", err)
 	}

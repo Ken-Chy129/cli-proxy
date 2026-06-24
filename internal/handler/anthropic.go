@@ -69,10 +69,11 @@ func (h *AnthropicHandler) Messages(c *gin.Context) {
 }
 
 func (h *AnthropicHandler) handleAnthropicStream(c *gin.Context, ae executor.AnthropicExecutor, model string, body []byte, start time.Time) {
-	stream, statusCode, err := ae.OpenAnthropicStream(c.Request.Context(), body, c.Request.Header)
+	ctx, getAccount := executor.WithAccountRecorder(c.Request.Context())
+	stream, statusCode, err := ae.OpenAnthropicStream(ctx, body, c.Request.Header)
 	if err != nil {
 		log.Printf("anthropic stream open error: %v", err)
-		h.recordAnthropicLog(c, model, start, true, nil, err)
+		h.recordAnthropicLog(c, model, start, true, nil, err, getAccount())
 		anthropicError(c, http.StatusBadGateway, "api_error", err.Error())
 		return
 	}
@@ -80,7 +81,7 @@ func (h *AnthropicHandler) handleAnthropicStream(c *gin.Context, ae executor.Ant
 
 	if statusCode != http.StatusOK {
 		errBody, _ := io.ReadAll(stream)
-		h.recordAnthropicLog(c, model, start, true, nil, fmt.Errorf("upstream error %d", statusCode))
+		h.recordAnthropicLog(c, model, start, true, nil, fmt.Errorf("upstream error %d", statusCode), getAccount())
 		c.Data(statusCode, "application/json", errBody)
 		return
 	}
@@ -91,22 +92,23 @@ func (h *AnthropicHandler) handleAnthropicStream(c *gin.Context, ae executor.Ant
 	c.Writer.Flush()
 
 	usage, copyErr := copyStreamAndExtractUsage(stream, c.Writer)
-	h.recordAnthropicLog(c, model, start, true, usage, copyErr)
+	h.recordAnthropicLog(c, model, start, true, usage, copyErr, getAccount())
 	if copyErr != nil {
 		log.Printf("anthropic stream copy error: %v", copyErr)
 	}
 }
 
 func (h *AnthropicHandler) handleAnthropicRaw(c *gin.Context, ae executor.AnthropicExecutor, model string, body []byte, start time.Time) {
-	respBody, statusCode, err := ae.ExecuteAnthropicRaw(c.Request.Context(), body, c.Request.Header)
+	ctx, getAccount := executor.WithAccountRecorder(c.Request.Context())
+	respBody, statusCode, err := ae.ExecuteAnthropicRaw(ctx, body, c.Request.Header)
 	if err != nil {
-		h.recordAnthropicLog(c, model, start, false, nil, err)
+		h.recordAnthropicLog(c, model, start, false, nil, err, getAccount())
 		log.Printf("anthropic error: %v", err)
 		anthropicError(c, http.StatusBadGateway, "api_error", err.Error())
 		return
 	}
 	usage := extractUsageFromResponse(respBody)
-	h.recordAnthropicLog(c, model, start, false, usage, nil)
+	h.recordAnthropicLog(c, model, start, false, usage, nil, getAccount())
 	c.Data(statusCode, "application/json", respBody)
 }
 
@@ -186,7 +188,7 @@ func copyStreamAndExtractUsage(src io.Reader, dst io.Writer) (*anthropicUsage, e
 	return &usage, nil
 }
 
-func (h *AnthropicHandler) recordAnthropicLog(c *gin.Context, model string, start time.Time, stream bool, usage *anthropicUsage, err error) {
+func (h *AnthropicHandler) recordAnthropicLog(c *gin.Context, model string, start time.Time, stream bool, usage *anthropicUsage, err error, account string) {
 	if h.statsDB == nil {
 		return
 	}
@@ -198,6 +200,7 @@ func (h *AnthropicHandler) recordAnthropicLog(c *gin.Context, model string, star
 		Stream:     stream,
 		Status:     http.StatusOK,
 		APIKeyName: apiKeyName(c),
+		Account:    account,
 	}
 	if usage != nil {
 		entry.PromptTokens = usage.InputTokens

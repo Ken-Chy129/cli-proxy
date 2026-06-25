@@ -99,7 +99,7 @@ func main() {
 		}
 	}()
 
-	if err := server.Run(cfg, r, tokenStore, keyStore, statsDB, claudeOAuth, codexOAuth, claudeExec, codexExec, vertexExec); err != nil {
+	if err := server.Run(*configPath, cfg, r, tokenStore, keyStore, statsDB, claudeOAuth, codexOAuth, claudeExec, codexExec, vertexExec); err != nil {
 		log.Fatalf("server error: %v", err)
 	}
 }

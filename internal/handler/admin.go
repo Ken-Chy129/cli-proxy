@@ -17,6 +17,7 @@ import (
 )
 
 type AdminHandler struct {
+	configPath  string
 	cfg         *config.Config
 	router      *router.Router
 	tokenStore  *auth.TokenStore
@@ -24,11 +25,13 @@ type AdminHandler struct {
 	statsDB     *stats.DB
 	claudeOAuth *auth.ClaudeOAuth
 	codexOAuth  *auth.CodexOAuth
+	claudeExec  *executor.ClaudeOAuthExecutor
+	codexExec   *executor.CodexExecutor
 	vertexExec  *executor.VertexExecutor
 }
 
-func NewAdminHandler(cfg *config.Config, r *router.Router, store *auth.TokenStore, keyStore *auth.KeyStore, db *stats.DB, claudeOAuth *auth.ClaudeOAuth, codexOAuth *auth.CodexOAuth, vertexExec *executor.VertexExecutor) *AdminHandler {
-	return &AdminHandler{cfg: cfg, router: r, tokenStore: store, keyStore: keyStore, statsDB: db, claudeOAuth: claudeOAuth, codexOAuth: codexOAuth, vertexExec: vertexExec}
+func NewAdminHandler(configPath string, cfg *config.Config, r *router.Router, store *auth.TokenStore, keyStore *auth.KeyStore, db *stats.DB, claudeOAuth *auth.ClaudeOAuth, codexOAuth *auth.CodexOAuth, claudeExec *executor.ClaudeOAuthExecutor, codexExec *executor.CodexExecutor, vertexExec *executor.VertexExecutor) *AdminHandler {
+	return &AdminHandler{configPath: configPath, cfg: cfg, router: r, tokenStore: store, keyStore: keyStore, statsDB: db, claudeOAuth: claudeOAuth, codexOAuth: codexOAuth, claudeExec: claudeExec, codexExec: codexExec, vertexExec: vertexExec}
 }
 
 func (h *AdminHandler) Status(c *gin.Context) {
@@ -208,8 +211,9 @@ func (h *AdminHandler) Config(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"server": gin.H{
-			"port":    h.cfg.Server.Port,
-			"api_key": apiKey,
+			"port":       h.cfg.Server.Port,
+			"api_key":    apiKey,
+			"admin_user": h.cfg.Server.AdminUser,
 		},
 		"vertex": gin.H{
 			"project_id": h.cfg.Vertex.ProjectID,
@@ -225,6 +229,139 @@ func (h *AdminHandler) Config(c *gin.Context) {
 			"models":  h.cfg.Codex.Models,
 		},
 	})
+}
+
+// cleanModelList trims, drops empty entries, and rejects duplicates.
+func cleanModelList(in []string) ([]string, error) {
+	out := make([]string, 0, len(in))
+	seen := make(map[string]bool, len(in))
+	for _, m := range in {
+		m = strings.TrimSpace(m)
+		if m == "" {
+			continue
+		}
+		if seen[m] {
+			return nil, fmt.Errorf("duplicate model %q", m)
+		}
+		seen[m] = true
+		out = append(out, m)
+	}
+	return out, nil
+}
+
+// UpdateConfig edits the net-new config surface (model lists + server settings)
+// not already controllable from the BACKENDS tab. Model-list edits apply live by
+// re-registering the executors with the router; server settings are persisted to
+// the config file, with port/api_key requiring a restart to take effect (admin
+// credentials apply live because loginHandler reads cfg on every request).
+func (h *AdminHandler) UpdateConfig(c *gin.Context) {
+	var req struct {
+		ClaudeOAuth struct {
+			Models []string `json:"models"`
+		} `json:"claude_oauth"`
+		Codex struct {
+			Models []string `json:"models"`
+		} `json:"codex"`
+		Vertex struct {
+			Models []config.ModelConfig `json:"models"`
+		} `json:"vertex"`
+		Server struct {
+			Port          int    `json:"port"`
+			APIKey        string `json:"api_key"`
+			AdminUser     string `json:"admin_user"`
+			AdminPassword string `json:"admin_password"`
+		} `json:"server"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body: " + err.Error()})
+		return
+	}
+
+	// --- validate ---
+	claudeModels, err := cleanModelList(req.ClaudeOAuth.Models)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "claude models: " + err.Error()})
+		return
+	}
+	codexModels, err := cleanModelList(req.Codex.Models)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "codex models: " + err.Error()})
+		return
+	}
+	vertexModels := make([]config.ModelConfig, 0, len(req.Vertex.Models))
+	seenAlias := make(map[string]bool)
+	for _, m := range req.Vertex.Models {
+		name := strings.TrimSpace(m.Name)
+		model := strings.TrimSpace(m.Model)
+		if name == "" && model == "" {
+			continue
+		}
+		if name == "" || model == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "vertex models: each row needs both an alias and a model"})
+			return
+		}
+		if seenAlias[name] {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "vertex models: duplicate alias " + name})
+			return
+		}
+		seenAlias[name] = true
+		vertexModels = append(vertexModels, config.ModelConfig{Name: name, Model: model})
+	}
+	// Port is optional: 0 means "leave unchanged". When provided it must be valid.
+	if req.Server.Port != 0 && (req.Server.Port < 1 || req.Server.Port > 65535) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "server port must be between 1 and 65535"})
+		return
+	}
+
+	// --- detect restart-required changes before mutating cfg ---
+	var restart []string
+	if req.Server.Port != 0 && req.Server.Port != h.cfg.Server.Port {
+		restart = append(restart, "port")
+	}
+	// A new api_key is only accepted when it's non-empty and not the masked value
+	// (the GET endpoint returns "abcd****"), so the form's placeholder never
+	// overwrites the real key.
+	apiKeyChanged := req.Server.APIKey != "" && !strings.Contains(req.Server.APIKey, "*")
+	if apiKeyChanged {
+		restart = append(restart, "api_key")
+	}
+
+	// --- apply live ---
+	if h.claudeExec != nil && h.cfg.ClaudeOAuth.Enabled {
+		h.claudeExec.SetModels(claudeModels)
+		h.router.UnregisterBackend("claude")
+		h.router.Register(h.claudeExec, "claude")
+	}
+	if h.vertexExec != nil {
+		h.vertexExec.SetModels(vertexModels)
+		if h.vertexExec.Configured() {
+			h.router.UnregisterBackend("vertex")
+			h.router.Register(h.vertexExec, "vertex")
+		}
+	}
+	if req.Server.AdminUser != "" {
+		h.cfg.Server.AdminUser = req.Server.AdminUser
+	}
+	if req.Server.AdminPassword != "" {
+		h.cfg.Server.AdminPassword = req.Server.AdminPassword
+	}
+
+	// --- update in-memory cfg, then persist ---
+	h.cfg.ClaudeOAuth.Models = claudeModels
+	h.cfg.Codex.Models = codexModels
+	h.cfg.Vertex.Models = vertexModels
+	if req.Server.Port != 0 {
+		h.cfg.Server.Port = req.Server.Port
+	}
+	if apiKeyChanged {
+		h.cfg.Server.APIKey = req.Server.APIKey
+	}
+
+	if err := config.Save(h.configPath, h.cfg); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "save config: " + err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true, "restart_required": restart})
 }
 
 func (h *AdminHandler) SyncModels(c *gin.Context) {

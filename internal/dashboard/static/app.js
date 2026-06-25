@@ -176,10 +176,126 @@ async function loadStats(range, btn) {
   ).join('') || keyEmpty;
 }
 
+function setCfgStatus(text, cls) {
+  const el = document.getElementById('cfg-status');
+  el.textContent = text;
+  el.className = 'cfg-status' + (cls ? ' ' + cls : '');
+}
+
+function makeChip(text) {
+  const chip = document.createElement('span');
+  chip.className = 'cfg-chip';
+  const label = document.createElement('span');
+  label.className = 'cfg-chip-label';
+  label.textContent = text;
+  const x = document.createElement('button');
+  x.type = 'button';
+  x.className = 'cfg-chip-x';
+  x.textContent = '✕';
+  x.onclick = () => chip.remove();
+  chip.append(label, x);
+  return chip;
+}
+
+function setupChips(container, values) {
+  container.innerHTML = '';
+  const input = document.createElement('input');
+  input.className = 'cfg-chip-input';
+  input.placeholder = 'add model…';
+  const commit = () => {
+    const v = input.value.trim();
+    if (!v) return;
+    const exists = chipValues(container).includes(v);
+    if (!exists) container.insertBefore(makeChip(v), input);
+    input.value = '';
+  };
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); commit(); }
+    else if (e.key === 'Backspace' && !input.value) {
+      const chips = container.querySelectorAll('.cfg-chip');
+      if (chips.length) chips[chips.length - 1].remove();
+    }
+  });
+  input.addEventListener('blur', commit);
+  (values || []).forEach(v => container.appendChild(makeChip(v)));
+  container.appendChild(input);
+  container.onclick = e => { if (e.target === container) input.focus(); };
+}
+
+function chipValues(container) {
+  return [...container.querySelectorAll('.cfg-chip-label')].map(s => s.textContent.trim()).filter(Boolean);
+}
+
+function addVertexRow(name, model) {
+  const rows = document.getElementById('cfg-vertex-rows');
+  const row = document.createElement('div');
+  row.className = 'cfg-row';
+  const nameInput = document.createElement('input');
+  nameInput.className = 'cfg-vx-name';
+  nameInput.placeholder = 'alias';
+  nameInput.value = name || '';
+  const arrow = document.createElement('span');
+  arrow.className = 'cfg-arrow';
+  arrow.textContent = '→';
+  const modelInput = document.createElement('input');
+  modelInput.className = 'cfg-vx-model';
+  modelInput.placeholder = 'underlying model';
+  modelInput.value = model || '';
+  const del = document.createElement('button');
+  del.type = 'button';
+  del.className = 'btn-row';
+  del.textContent = '✕';
+  del.onclick = () => row.remove();
+  row.append(nameInput, arrow, modelInput, del);
+  rows.appendChild(row);
+}
+
 async function loadConfig() {
   const r = await apiFetch('/api/config');
+  if (r.status === 401) { window.location.href = '/login'; return; }
   const d = await r.json();
-  document.getElementById('config-display').textContent = JSON.stringify(d, null, 2);
+  setupChips(document.getElementById('cfg-claude-models'), d.claude_oauth?.models || []);
+  setupChips(document.getElementById('cfg-codex-models'), d.codex?.models || []);
+  const rows = document.getElementById('cfg-vertex-rows');
+  rows.innerHTML = '';
+  const vmodels = d.vertex?.models || [];
+  vmodels.forEach(m => addVertexRow(m.Name ?? m.name, m.Model ?? m.model));
+  if (!vmodels.length) addVertexRow('', '');
+  document.getElementById('cfg-admin-user').value = d.server?.admin_user || '';
+  document.getElementById('cfg-admin-pass').value = '';
+  setCfgStatus('', '');
+}
+
+async function saveConfig() {
+  const claude = chipValues(document.getElementById('cfg-claude-models'));
+  const codex = chipValues(document.getElementById('cfg-codex-models'));
+  const vertex = [...document.querySelectorAll('#cfg-vertex-rows .cfg-row')].map(row => ({
+    name: row.querySelector('.cfg-vx-name').value.trim(),
+    model: row.querySelector('.cfg-vx-model').value.trim(),
+  })).filter(m => m.name || m.model);
+  const body = {
+    claude_oauth: { models: claude },
+    codex: { models: codex },
+    vertex: { models: vertex },
+    server: {
+      admin_user: document.getElementById('cfg-admin-user').value.trim(),
+      admin_password: document.getElementById('cfg-admin-pass').value,
+    },
+  };
+  setCfgStatus('Saving…', '');
+  const r = await apiFetch('/api/config', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) { setCfgStatus(d.error || 'Save failed', 'err'); return; }
+  let msg = 'Saved.';
+  if (d.restart_required && d.restart_required.length) {
+    msg += ' Restart required for: ' + d.restart_required.join(', ') + '.';
+  }
+  setCfgStatus(msg, 'ok');
+  document.getElementById('cfg-admin-pass').value = '';
 }
 
 function switchTab(name, el) {

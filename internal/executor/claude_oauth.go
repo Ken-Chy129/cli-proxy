@@ -20,11 +20,12 @@ import (
 )
 
 type ClaudeOAuthExecutor struct {
-	oauth          *auth.ClaudeOAuth
-	httpClient     *http.Client
-	models         []string
-	lastBetaFlags  string
-	betaMu         sync.RWMutex
+	oauth         *auth.ClaudeOAuth
+	httpClient    *http.Client
+	models        []string
+	modelsMu      sync.RWMutex
+	lastBetaFlags string
+	betaMu        sync.RWMutex
 }
 
 func NewClaudeOAuthExecutor(oauth *auth.ClaudeOAuth, models []string) *ClaudeOAuthExecutor {
@@ -35,7 +36,19 @@ func NewClaudeOAuthExecutor(oauth *auth.ClaudeOAuth, models []string) *ClaudeOAu
 	}
 }
 
-func (e *ClaudeOAuthExecutor) Models() []string { return e.models }
+func (e *ClaudeOAuthExecutor) Models() []string {
+	e.modelsMu.RLock()
+	defer e.modelsMu.RUnlock()
+	return e.models
+}
+
+// SetModels replaces the served model list at runtime. Callers must re-register
+// the executor with the router afterwards so routing picks up the new list.
+func (e *ClaudeOAuthExecutor) SetModels(models []string) {
+	e.modelsMu.Lock()
+	e.models = models
+	e.modelsMu.Unlock()
+}
 
 // doWithFailover acquires a Claude account, builds a request via makeReq, and
 // sends it. On HTTP 429 it marks that account rate-limited (using the upstream

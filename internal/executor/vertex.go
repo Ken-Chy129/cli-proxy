@@ -55,7 +55,26 @@ func NewVertexExecutor(cfg config.VertexConfig) *VertexExecutor {
 	return &VertexExecutor{cfg: cfg, models: models, projectID: cfg.ProjectID, region: region}
 }
 
-func (e *VertexExecutor) Models() []string { return e.models }
+func (e *VertexExecutor) Models() []string {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.models
+}
+
+// SetModels replaces the served model aliases at runtime. It updates both the
+// alias list returned by Models() and cfg.Models used by resolveModel for the
+// name→underlying-model mapping. Callers must re-register the executor with the
+// router afterwards so routing picks up the new aliases.
+func (e *VertexExecutor) SetModels(models []config.ModelConfig) {
+	names := make([]string, len(models))
+	for i, m := range models {
+		names[i] = m.Name
+	}
+	e.mu.Lock()
+	e.cfg.Models = models
+	e.models = names
+	e.mu.Unlock()
+}
 
 // Configured reports whether the executor has a project to send requests to.
 func (e *VertexExecutor) Configured() bool {
@@ -135,6 +154,8 @@ func (e *VertexExecutor) ClearCredentials() bool {
 }
 
 func (e *VertexExecutor) resolveModel(name string) string {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
 	for _, m := range e.cfg.Models {
 		if m.Name == name {
 			return m.Model

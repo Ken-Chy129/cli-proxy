@@ -14,7 +14,7 @@ import (
 	"github.com/Ken-Chy129/llm-proxy/internal/stats"
 )
 
-func Run(cfg *config.Config, r *router.Router, tokenStore *auth.TokenStore, keyStore *auth.KeyStore, statsDB *stats.DB,
+func Run(configPath string, cfg *config.Config, r *router.Router, tokenStore *auth.TokenStore, keyStore *auth.KeyStore, statsDB *stats.DB,
 	claudeOAuth *auth.ClaudeOAuth, codexOAuth *auth.CodexOAuth,
 	claudeExec *executor.ClaudeOAuthExecutor, codexExec *executor.CodexExecutor,
 	vertexExec *executor.VertexExecutor) error {
@@ -24,7 +24,7 @@ func Run(cfg *config.Config, r *router.Router, tokenStore *auth.TokenStore, keyS
 	engine.Use(gin.Recovery())
 
 	chatHandler := handler.NewChatHandler(r, statsDB)
-	adminHandler := handler.NewAdminHandler(cfg, r, tokenStore, keyStore, statsDB, claudeOAuth, codexOAuth, vertexExec)
+	adminHandler := handler.NewAdminHandler(configPath, cfg, r, tokenStore, keyStore, statsDB, claudeOAuth, codexOAuth, claudeExec, codexExec, vertexExec)
 	imagesHandler := handler.NewImagesHandler(r, statsDB)
 	anthropicHandler := handler.NewAnthropicHandler(r, statsDB)
 
@@ -53,6 +53,7 @@ func Run(cfg *config.Config, r *router.Router, tokenStore *auth.TokenStore, keyS
 	admin.GET("/logs", adminHandler.Logs)
 	admin.GET("/stats", adminHandler.Stats)
 	admin.GET("/config", adminHandler.Config)
+	admin.PUT("/config", adminHandler.UpdateConfig)
 	admin.POST("/sync-models", adminHandler.SyncModels)
 	admin.POST("/refresh-quota/:provider/:id", adminHandler.RefreshQuota)
 	admin.DELETE("/accounts/:provider/:id", adminHandler.DeleteAccount)

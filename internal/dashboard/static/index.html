@@ -187,7 +187,46 @@
   <!-- Config Tab -->
   <div id="tab-config" class="hidden">
     <div class="panel">
-      <pre class="config-display" id="config-display"></pre>
+      <div class="panel-header"><span>Models</span></div>
+      <div class="cfg-body">
+        <div class="cfg-field">
+          <label>Claude OAuth models <span class="cfg-badge cfg-live">● live</span></label>
+          <p class="cfg-hint">Models exposed via Claude OAuth. Type a name and press Enter to add.</p>
+          <div id="cfg-claude-models" class="cfg-chips"></div>
+        </div>
+        <div class="cfg-field">
+          <label>Vertex models <span class="cfg-badge cfg-live">● live</span></label>
+          <p class="cfg-hint">Alias clients call → underlying Vertex model. Applied immediately on save.</p>
+          <div id="cfg-vertex-rows" class="cfg-rows"></div>
+          <button type="button" class="btn-add" onclick="addVertexRow()">+ Add alias</button>
+        </div>
+        <div class="cfg-field">
+          <label>Codex models <span class="cfg-badge cfg-restart">⟳ restart</span></label>
+          <p class="cfg-hint">Fallback list only — Codex auto-syncs its models from the API at startup, which overrides this.</p>
+          <div id="cfg-codex-models" class="cfg-chips"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel" style="margin-top:18px">
+      <div class="panel-header"><span>Admin</span></div>
+      <div class="cfg-body">
+        <div class="cfg-grid">
+          <div class="cfg-field">
+            <label>Admin user <span class="cfg-badge cfg-live">● live</span></label>
+            <input id="cfg-admin-user" type="text" autocomplete="off">
+          </div>
+          <div class="cfg-field">
+            <label>Admin password <span class="cfg-badge cfg-live">● live</span></label>
+            <input id="cfg-admin-pass" type="password" autocomplete="new-password" placeholder="leave blank to keep current">
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="cfg-actions">
+      <div id="cfg-status" class="cfg-status"></div>
+      <button class="btn btn-primary" onclick="saveConfig()">Save Config</button>
     </div>
   </div>
 </div>

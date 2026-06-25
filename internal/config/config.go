@@ -59,3 +59,22 @@ func Load(path string) (*Config, error) {
 	}
 	return &cfg, nil
 }
+
+// Save writes cfg back to path as YAML. The write is atomic (temp file + rename)
+// so a crash mid-write never leaves a truncated config. Note: this re-marshals
+// the whole struct, so any comments in the original file are lost.
+func Save(path string, cfg *Config) error {
+	data, err := yaml.Marshal(cfg)
+	if err != nil {
+		return fmt.Errorf("marshal config: %w", err)
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+		return fmt.Errorf("write config: %w", err)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		os.Remove(tmp)
+		return fmt.Errorf("replace config: %w", err)
+	}
+	return nil
+}

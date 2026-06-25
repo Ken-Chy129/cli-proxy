@@ -143,32 +143,45 @@
 
   <!-- Stats Tab -->
   <div id="tab-stats" class="hidden">
-    <div class="stats-toolbar" id="stats-toolbar">
-      <button class="stats-btn" onclick="loadStats('today',this)">Today</button>
-      <button class="stats-btn active" onclick="loadStats('7d',this)">7d</button>
-      <button class="stats-btn" onclick="loadStats('30d',this)">30d</button>
-      <button class="stats-btn" onclick="loadStats('all',this)">All</button>
+    <div class="stats-toolbar" id="stats-range">
+      <button class="stats-btn" onclick="setRange('today',this)">Today</button>
+      <button class="stats-btn active" onclick="setRange('7d',this)">7d</button>
+      <button class="stats-btn" onclick="setRange('30d',this)">30d</button>
+      <button class="stats-btn" onclick="setRange('all',this)">All</button>
+      <div class="stats-spacer"></div>
+      <div class="seg" id="metric-seg">
+        <button class="seg-btn active" onclick="setMetric('requests',this)">Requests</button>
+        <button class="seg-btn" onclick="setMetric('tokens',this)">Tokens</button>
+      </div>
     </div>
-    <div class="stats-grid">
-      <div class="panel">
-        <div class="panel-header"><span>By Model</span></div>
-        <table>
-          <thead><tr><th>Model</th><th>Reqs</th><th>Tokens</th><th>Avg ms</th><th>Err</th></tr></thead>
-          <tbody id="stats-model-body"></tbody>
-        </table>
+
+    <div class="panel">
+      <div class="panel-header">
+        <span id="trend-title">Requests over time</span>
+        <div class="trend-readouts">
+          <span><b id="rd-reqs">0</b> reqs</span>
+          <span><b id="rd-tokens">0</b> tokens</span>
+          <span><b id="rd-err">0%</b> err</span>
+        </div>
       </div>
-      <div class="panel">
-        <div class="panel-header"><span>By API Key</span></div>
-        <table><thead><tr><th>Key</th><th>Requests</th><th>Total Tokens</th><th>Tokens Today</th><th>Errors</th></tr></thead>
-          <tbody id="stats-key-body"></tbody></table>
+      <div class="trend-wrap" id="trend-wrap">
+        <svg id="trend-svg" class="trend-svg" onmousemove="trendHover(event)" onmouseleave="trendLeave()"></svg>
+        <div class="chart-tip hidden" id="trend-tip"></div>
+        <div class="chart-empty hidden" id="trend-empty">No data in range</div>
       </div>
-      <div class="panel">
-        <div class="panel-header"><span>By Day</span></div>
-        <table>
-          <thead><tr><th>Date</th><th>Reqs</th><th>Tokens</th><th>Err</th></tr></thead>
-          <tbody id="stats-day-body"></tbody>
-        </table>
+    </div>
+
+    <div class="panel" style="margin-top:14px">
+      <div class="panel-header">
+        <span>Breakdown</span>
+        <div class="seg" id="dim-seg">
+          <button class="seg-btn active" onclick="setDimension('model',this)">Model</button>
+          <button class="seg-btn" onclick="setDimension('key',this)">Key</button>
+          <button class="seg-btn" onclick="setDimension('backend',this)">Backend</button>
+          <button class="seg-btn" onclick="setDimension('account',this)">Account</button>
+        </div>
       </div>
+      <div class="bars" id="breakdown-bars"></div>
     </div>
   </div>
 

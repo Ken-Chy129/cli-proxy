@@ -51,6 +51,33 @@ type DailyStats struct {
 	ErrorCount       int    `json:"error_count"`
 }
 
+// BucketStats is one point on the time-series trend (hourly or daily bucket).
+type BucketStats struct {
+	Bucket           string `json:"bucket"`
+	RequestCount     int    `json:"request_count"`
+	PromptTokens     int    `json:"prompt_tokens"`
+	CompletionTokens int    `json:"completion_tokens"`
+	ErrorCount       int    `json:"error_count"`
+}
+
+// DimStats is one row of a generic dimension breakdown (per model/key/backend/account).
+type DimStats struct {
+	Label        string  `json:"label"`
+	RequestCount int     `json:"request_count"`
+	TotalTokens  int     `json:"total_tokens"`
+	ErrorCount   int     `json:"error_count"`
+	AvgLatencyMs float64 `json:"avg_latency_ms"`
+}
+
+// dimensionColumns whitelists the groupable columns so the dimension name can be
+// safely interpolated into the GROUP BY (it never comes from untrusted SQL).
+var dimensionColumns = map[string]string{
+	"model":   "model",
+	"backend": "backend",
+	"key":     "api_key_name",
+	"account": "account",
+}
+
 type DB struct {
 	db *sql.DB
 }
@@ -196,6 +223,83 @@ func (d *DB) StatsByDay(daysBack int) ([]DailyStats, error) {
 	for rows.Next() {
 		var s DailyStats
 		rows.Scan(&s.Date, &s.RequestCount, &s.TotalPrompt, &s.TotalCompletion, &s.ErrorCount)
+		result = append(result, s)
+	}
+	return result, nil
+}
+
+// StatsByBucket returns the request/token/error counts grouped into time buckets
+// over the last daysBack days. granularity is "hour" (bucket key like
+// 2026-06-25T14:00) or anything else for "day" (2026-06-25). tzMinutes shifts
+// the bucket boundaries to the viewer's timezone (minutes east of UTC) so the
+// chart reads in local time regardless of where the server runs. Buckets with
+// no traffic are omitted; callers fill the continuous axis.
+func (d *DB) StatsByBucket(daysBack, tzMinutes int, granularity string) ([]BucketStats, error) {
+	since := time.Now().AddDate(0, 0, -daysBack).UTC().Format(time.RFC3339)
+	tzMod := fmt.Sprintf(", '%+d minutes'", tzMinutes)
+	bucketExpr := "date(time" + tzMod + ")"
+	if granularity == "hour" {
+		bucketExpr = "strftime('%Y-%m-%dT%H:00', time" + tzMod + ")"
+	}
+	rows, err := d.db.Query(`
+		SELECT `+bucketExpr+` as b,
+			COUNT(*),
+			COALESCE(SUM(prompt_tokens), 0),
+			COALESCE(SUM(completion_tokens), 0),
+			COALESCE(SUM(CASE WHEN status >= 400 THEN 1 ELSE 0 END), 0)
+		FROM request_logs
+		WHERE time >= ?
+		GROUP BY b
+		ORDER BY b ASC`, since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []BucketStats
+	for rows.Next() {
+		var s BucketStats
+		rows.Scan(&s.Bucket, &s.RequestCount, &s.PromptTokens, &s.CompletionTokens, &s.ErrorCount)
+		result = append(result, s)
+	}
+	return result, nil
+}
+
+// StatsByDimension groups traffic over the last daysBack days by one of the
+// whitelisted dimensions (model/backend/key/account). For key and account the
+// empty label is filtered out. Returns an error for an unknown dimension.
+func (d *DB) StatsByDimension(dimension string, daysBack int) ([]DimStats, error) {
+	col, ok := dimensionColumns[dimension]
+	if !ok {
+		return nil, fmt.Errorf("unknown dimension %q", dimension)
+	}
+	since := time.Now().AddDate(0, 0, -daysBack).UTC().Format(time.RFC3339)
+	where := "time >= ?"
+	if dimension == "key" || dimension == "account" {
+		where += " AND " + col + " != ''"
+	}
+	rows, err := d.db.Query(`
+		SELECT `+col+` as label,
+			COUNT(*),
+			COALESCE(SUM(prompt_tokens + completion_tokens), 0),
+			COALESCE(SUM(CASE WHEN status >= 400 THEN 1 ELSE 0 END), 0),
+			COALESCE(AVG(latency_ms), 0)
+		FROM request_logs
+		WHERE `+where+`
+		GROUP BY label
+		ORDER BY COUNT(*) DESC`, since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []DimStats
+	for rows.Next() {
+		var s DimStats
+		rows.Scan(&s.Label, &s.RequestCount, &s.TotalTokens, &s.ErrorCount, &s.AvgLatencyMs)
+		if s.Label == "" {
+			s.Label = "(none)"
+		}
 		result = append(result, s)
 	}
 	return result, nil

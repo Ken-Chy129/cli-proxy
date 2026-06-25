@@ -159,21 +159,171 @@ async function loadLogs() {
 function prevPage() { if (logPage > 0) { logPage--; loadLogs(); } }
 function nextPage() { logPage++; loadLogs(); }
 
+let statsRange = '7d', statsMetric = 'requests', statsDim = 'model', statsData = null;
+
+function setActive(groupId, btn) {
+  document.querySelectorAll('#' + groupId + ' button').forEach(b => b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+}
+
 async function loadStats(range, btn) {
-  if (btn) { document.querySelectorAll('.stats-btn').forEach(b => b.classList.remove('active')); btn.classList.add('active'); }
-  const r = await apiFetch('/api/stats?range=' + (range || '7d'));
-  const d = await r.json();
-  const empty = '<tr><td colspan="5" class="text-muted" style="text-align:center;padding:20px">No data</td></tr>';
-  document.getElementById('stats-model-body').innerHTML = (d.by_model || []).map(s =>
-    `<tr><td class="text-mono">${s.model}</td><td>${s.request_count}</td><td>${(s.total_prompt_tokens + s.total_completion_tokens).toLocaleString()}</td><td>${Math.round(s.avg_latency_ms)}</td><td class="${s.error_count ? 'text-red' : ''}">${s.error_count}</td></tr>`
-  ).join('') || empty;
-  document.getElementById('stats-day-body').innerHTML = (d.by_day || []).map(s =>
-    `<tr><td class="text-mono">${s.date}</td><td>${s.request_count}</td><td>${(s.total_prompt_tokens + s.total_completion_tokens).toLocaleString()}</td><td class="${s.error_count ? 'text-red' : ''}">${s.error_count}</td></tr>`
-  ).join('') || empty.replace('5', '4');
-  const keyEmpty = '<tr><td colspan="5" class="text-muted" style="text-align:center;padding:20px">No key data</td></tr>';
-  document.getElementById('stats-key-body').innerHTML = (d.by_key || []).map(s =>
-    `<tr><td class="text-mono">${s.key_name}</td><td>${s.request_count}</td><td>${s.total_tokens.toLocaleString()}</td><td>${s.tokens_today.toLocaleString()}</td><td class="${s.error_count ? 'text-red' : ''}">${s.error_count}</td></tr>`
-  ).join('') || keyEmpty;
+  if (range) statsRange = range;
+  if (btn) setActive('stats-range', btn);
+  const tz = -new Date().getTimezoneOffset(); // minutes east of UTC
+  const r = await apiFetch('/api/stats?range=' + statsRange + '&tz=' + tz);
+  if (r.status === 401) { window.location.href = '/login'; return; }
+  statsData = await r.json();
+  renderTrend();
+  renderBreakdown();
+}
+
+function setRange(range, btn) { loadStats(range, btn); }
+function setMetric(metric, btn) { statsMetric = metric; setActive('metric-seg', btn); renderTrend(); renderBreakdown(); }
+function setDimension(dim, btn) { statsDim = dim; setActive('dim-seg', btn); renderBreakdown(); }
+
+// --- axis helpers (local time, matching the tz-shifted SQLite bucket keys) ---
+const pad2 = n => String(n).padStart(2, '0');
+const dayKey = d => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+const hourKey = d => `${dayKey(d)}T${pad2(d.getHours())}:00`;
+
+function buildAxis(series) {
+  const map = {};
+  (series || []).forEach(s => { map[s.bucket] = s; });
+  const zero = b => map[b] || { bucket: b, request_count: 0, prompt_tokens: 0, completion_tokens: 0, error_count: 0 };
+  let keys = [];
+  if (statsRange === 'all') {
+    keys = (series || []).map(s => s.bucket); // unbounded: plot returned buckets as-is
+  } else if (statsData && statsData.granularity === 'hour') {
+    const now = new Date(); now.setMinutes(0, 0, 0);
+    for (let i = 23; i >= 0; i--) keys.push(hourKey(new Date(now.getTime() - i * 3600e3)));
+  } else {
+    const days = statsRange === '30d' ? 30 : 7;
+    const now = new Date();
+    for (let i = days - 1; i >= 0; i--) keys.push(dayKey(new Date(now.getTime() - i * 86400e3)));
+  }
+  return keys.map(zero);
+}
+
+const metricVal = p => statsMetric === 'tokens' ? (p.prompt_tokens + p.completion_tokens) : p.request_count;
+const xLabel = b => statsData && statsData.granularity === 'hour' ? b.slice(11, 16) : b.slice(5);
+
+function renderTrend() {
+  if (!statsData) return;
+  document.getElementById('trend-title').textContent = (statsMetric === 'tokens' ? 'Tokens' : 'Requests') + ' over time';
+  // range-scoped readouts
+  const s = statsData.series || [];
+  const reqs = s.reduce((a, p) => a + p.request_count, 0);
+  const toks = s.reduce((a, p) => a + p.prompt_tokens + p.completion_tokens, 0);
+  const errs = s.reduce((a, p) => a + p.error_count, 0);
+  document.getElementById('rd-reqs').textContent = reqs.toLocaleString();
+  document.getElementById('rd-tokens').textContent = toks.toLocaleString();
+  document.getElementById('rd-err').textContent = (reqs ? (errs / reqs * 100).toFixed(1) : '0') + '%';
+
+  const pts = buildAxis(s);
+  const svg = document.getElementById('trend-svg');
+  const empty = document.getElementById('trend-empty');
+  if (pts.length < 2 || metricMax(pts) === 0) {
+    svg.innerHTML = '';
+    empty.classList.remove('hidden');
+    return;
+  }
+  empty.classList.add('hidden');
+
+  const wrap = document.getElementById('trend-wrap');
+  const W = wrap.clientWidth || 900, H = 240;
+  const padL = 46, padR = 14, padT = 16, padB = 26;
+  const max = metricMax(pts);
+  const innerW = W - padL - padR, innerH = H - padT - padB;
+  const x = i => padL + (pts.length === 1 ? innerW / 2 : i * innerW / (pts.length - 1));
+  const y = v => padT + innerH - (v / max) * innerH;
+
+  const coords = pts.map((p, i) => [x(i), y(metricVal(p))]);
+  const line = coords.map((c, i) => (i ? 'L' : 'M') + c[0].toFixed(1) + ',' + c[1].toFixed(1)).join(' ');
+  const area = `M${coords[0][0].toFixed(1)},${(padT + innerH).toFixed(1)} ` +
+    coords.map(c => 'L' + c[0].toFixed(1) + ',' + c[1].toFixed(1)).join(' ') +
+    ` L${coords[coords.length - 1][0].toFixed(1)},${(padT + innerH).toFixed(1)} Z`;
+
+  // y gridlines at 0, .5, 1
+  let grid = '';
+  [0, 0.5, 1].forEach(f => {
+    const gy = padT + innerH - f * innerH;
+    grid += `<line x1="${padL}" y1="${gy.toFixed(1)}" x2="${W - padR}" y2="${gy.toFixed(1)}" class="grid-line"/>`;
+    grid += `<text x="${padL - 8}" y="${(gy + 3).toFixed(1)}" class="axis-label" text-anchor="end">${fmtCompact(Math.round(f * max))}</text>`;
+  });
+  // x labels: ~5 evenly spaced
+  let xlabels = '';
+  const step = Math.max(1, Math.ceil(pts.length / 5));
+  for (let i = 0; i < pts.length; i += step) {
+    xlabels += `<text x="${x(i).toFixed(1)}" y="${H - 8}" class="axis-label" text-anchor="middle">${xLabel(pts[i].bucket)}</text>`;
+  }
+
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  svg.innerHTML = `
+    <defs><linearGradient id="trendFill" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="var(--accent)" stop-opacity="0.28"/>
+      <stop offset="100%" stop-color="var(--accent)" stop-opacity="0"/>
+    </linearGradient></defs>
+    ${grid}
+    <path d="${area}" fill="url(#trendFill)"/>
+    <path d="${line}" class="trend-line" fill="none"/>
+    ${xlabels}
+    <line id="trend-guide" class="trend-guide hidden" y1="${padT}" y2="${padT + innerH}"/>
+    <circle id="trend-dot" class="trend-dot hidden" r="3.5"/>`;
+
+  // hover
+  svg._pts = pts; svg._coords = coords; svg._geom = { padL, innerW, n: pts.length };
+}
+
+function metricMax(pts) { return Math.max(0, ...pts.map(metricVal)); }
+function fmtCompact(n) {
+  if (n >= 1e6) return (n / 1e6).toFixed(1).replace(/\.0$/, '') + 'M';
+  if (n >= 1e3) return (n / 1e3).toFixed(1).replace(/\.0$/, '') + 'k';
+  return String(n);
+}
+
+function trendHover(e) {
+  const svg = document.getElementById('trend-svg');
+  if (!svg._coords) return;
+  const rect = svg.getBoundingClientRect();
+  const vb = svg.viewBox.baseVal;
+  const px = (e.clientX - rect.left) / rect.width * vb.width;
+  const { padL, innerW, n } = svg._geom;
+  let idx = Math.round((px - padL) / (n > 1 ? innerW / (n - 1) : 1));
+  idx = Math.max(0, Math.min(n - 1, idx));
+  const [cx, cy] = svg._coords[idx];
+  const p = svg._pts[idx];
+  const guide = document.getElementById('trend-guide');
+  const dot = document.getElementById('trend-dot');
+  guide.setAttribute('x1', cx); guide.setAttribute('x2', cx); guide.classList.remove('hidden');
+  dot.setAttribute('cx', cx); dot.setAttribute('cy', cy); dot.classList.remove('hidden');
+  const tip = document.getElementById('trend-tip');
+  tip.innerHTML = `<b>${fmtCompact(metricVal(p))}</b> ${statsMetric}<span class="tip-sub">${p.bucket.replace('T', ' ')} · ${p.error_count} err</span>`;
+  tip.classList.remove('hidden');
+  const tx = cx / vb.width * rect.width;
+  tip.style.left = Math.min(rect.width - 150, Math.max(0, tx + 10)) + 'px';
+  tip.style.top = (cy / vb.height * rect.height - 10) + 'px';
+}
+function trendLeave() {
+  ['trend-guide', 'trend-dot', 'trend-tip'].forEach(id => document.getElementById(id)?.classList.add('hidden'));
+}
+
+function renderBreakdown() {
+  if (!statsData) return;
+  const rows = (statsData['by_' + statsDim] || []).slice()
+    .map(r => ({ label: r.label, val: statsMetric === 'tokens' ? r.total_tokens : r.request_count, err: r.error_count }))
+    .filter(r => r.val > 0)
+    .sort((a, b) => b.val - a.val)
+    .slice(0, 20);
+  const el = document.getElementById('breakdown-bars');
+  if (!rows.length) { el.innerHTML = '<div class="chart-empty" style="position:static">No data</div>'; return; }
+  const max = rows[0].val;
+  el.innerHTML = rows.map(r => `
+    <div class="bar-row">
+      <div class="bar-label" title="${r.label}">${r.label}</div>
+      <div class="bar-track"><div class="bar-fill" style="width:${Math.max(2, r.val / max * 100)}%"></div></div>
+      <div class="bar-val">${fmtCompact(r.val)}</div>
+      <div class="bar-err ${r.err ? 'text-red' : 'text-muted'}">${r.err}</div>
+    </div>`).join('');
 }
 
 function setCfgStatus(text, cls) {
@@ -304,7 +454,7 @@ function switchTab(name, el) {
   document.getElementById('tab-' + name).classList.remove('hidden');
   if (el) el.classList.add('active');
   if (name === 'logs') loadLogs();
-  if (name === 'stats') loadStats('7d');
+  if (name === 'stats') loadStats(statsRange);
   if (name === 'keys') loadKeys();
   if (name === 'config') loadConfig();
 }

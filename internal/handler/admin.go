@@ -192,15 +192,32 @@ func (h *AdminHandler) Stats(c *gin.Context) {
 		days = 3650
 	}
 
-	byModel, _ := h.statsDB.StatsByModel(days)
-	byDay, _ := h.statsDB.StatsByDay(days)
-	byKey, _ := h.statsDB.StatsByKey()
+	granularity := "day"
+	if rangeParam == "today" {
+		granularity = "hour"
+	}
+
+	// tz: viewer's offset in minutes east of UTC (browser -getTimezoneOffset()).
+	// Clamped to the valid real-world range; defaults to UTC.
+	tzMinutes, _ := strconv.Atoi(c.DefaultQuery("tz", "0"))
+	if tzMinutes < -720 || tzMinutes > 840 {
+		tzMinutes = 0
+	}
+
+	series, _ := h.statsDB.StatsByBucket(days, tzMinutes, granularity)
+	byModel, _ := h.statsDB.StatsByDimension("model", days)
+	byKey, _ := h.statsDB.StatsByDimension("key", days)
+	byBackend, _ := h.statsDB.StatsByDimension("backend", days)
+	byAccount, _ := h.statsDB.StatsByDimension("account", days)
 
 	c.JSON(http.StatusOK, gin.H{
-		"range":    rangeParam,
-		"by_model": byModel,
-		"by_day":   byDay,
-		"by_key":   byKey,
+		"range":       rangeParam,
+		"granularity": granularity,
+		"series":      series,
+		"by_model":    byModel,
+		"by_key":      byKey,
+		"by_backend":  byBackend,
+		"by_account":  byAccount,
 	})
 }
 

@@ -78,6 +78,34 @@ var dimensionColumns = map[string]string{
 	"account": "account",
 }
 
+// DimensionColumn resolves a dimension name (model/key/backend/account) to its
+// underlying column, or "" when unknown. Used by callers to build filters.
+func DimensionColumn(dim string) string { return dimensionColumns[dim] }
+
+// filterClause returns an extra "AND col = ?" plus its arg when col is a known
+// column and val is non-empty. col is validated against the whitelisted columns
+// so it can be interpolated into SQL safely; "(none)" maps back to the empty
+// string actually stored in the row.
+func filterClause(col, val string) (string, []any) {
+	if col == "" || val == "" {
+		return "", nil
+	}
+	known := false
+	for _, c := range dimensionColumns {
+		if c == col {
+			known = true
+			break
+		}
+	}
+	if !known {
+		return "", nil
+	}
+	if val == "(none)" {
+		val = ""
+	}
+	return " AND " + col + " = ?", []any{val}
+}
+
 type DB struct {
 	db *sql.DB
 }
@@ -234,13 +262,14 @@ func (d *DB) StatsByDay(daysBack int) ([]DailyStats, error) {
 // the bucket boundaries to the viewer's timezone (minutes east of UTC) so the
 // chart reads in local time regardless of where the server runs. Buckets with
 // no traffic are omitted; callers fill the continuous axis.
-func (d *DB) StatsByBucket(daysBack, tzMinutes int, granularity string) ([]BucketStats, error) {
+func (d *DB) StatsByBucket(daysBack, tzMinutes int, granularity, filterCol, filterVal string) ([]BucketStats, error) {
 	since := time.Now().AddDate(0, 0, -daysBack).UTC().Format(time.RFC3339)
 	tzMod := fmt.Sprintf(", '%+d minutes'", tzMinutes)
 	bucketExpr := "date(time" + tzMod + ")"
 	if granularity == "hour" {
 		bucketExpr = "strftime('%Y-%m-%dT%H:00', time" + tzMod + ")"
 	}
+	fc, fargs := filterClause(filterCol, filterVal)
 	rows, err := d.db.Query(`
 		SELECT `+bucketExpr+` as b,
 			COUNT(*),
@@ -248,9 +277,9 @@ func (d *DB) StatsByBucket(daysBack, tzMinutes int, granularity string) ([]Bucke
 			COALESCE(SUM(completion_tokens), 0),
 			COALESCE(SUM(CASE WHEN status >= 400 THEN 1 ELSE 0 END), 0)
 		FROM request_logs
-		WHERE time >= ?
+		WHERE time >= ?`+fc+`
 		GROUP BY b
-		ORDER BY b ASC`, since)
+		ORDER BY b ASC`, append([]any{since}, fargs...)...)
 	if err != nil {
 		return nil, err
 	}
@@ -268,7 +297,7 @@ func (d *DB) StatsByBucket(daysBack, tzMinutes int, granularity string) ([]Bucke
 // StatsByDimension groups traffic over the last daysBack days by one of the
 // whitelisted dimensions (model/backend/key/account). For key and account the
 // empty label is filtered out. Returns an error for an unknown dimension.
-func (d *DB) StatsByDimension(dimension string, daysBack int) ([]DimStats, error) {
+func (d *DB) StatsByDimension(dimension string, daysBack int, filterCol, filterVal string) ([]DimStats, error) {
 	col, ok := dimensionColumns[dimension]
 	if !ok {
 		return nil, fmt.Errorf("unknown dimension %q", dimension)
@@ -278,6 +307,7 @@ func (d *DB) StatsByDimension(dimension string, daysBack int) ([]DimStats, error
 	if dimension == "key" || dimension == "account" {
 		where += " AND " + col + " != ''"
 	}
+	fc, fargs := filterClause(filterCol, filterVal)
 	rows, err := d.db.Query(`
 		SELECT `+col+` as label,
 			COUNT(*),
@@ -285,9 +315,9 @@ func (d *DB) StatsByDimension(dimension string, daysBack int) ([]DimStats, error
 			COALESCE(SUM(CASE WHEN status >= 400 THEN 1 ELSE 0 END), 0),
 			COALESCE(AVG(latency_ms), 0)
 		FROM request_logs
-		WHERE `+where+`
+		WHERE `+where+fc+`
 		GROUP BY label
-		ORDER BY COUNT(*) DESC`, since)
+		ORDER BY COUNT(*) DESC`, append([]any{since}, fargs...)...)
 	if err != nil {
 		return nil, err
 	}
@@ -303,6 +333,22 @@ func (d *DB) StatsByDimension(dimension string, daysBack int) ([]DimStats, error
 		result = append(result, s)
 	}
 	return result, nil
+}
+
+// StatsSummary returns range-scoped totals, optionally filtered to one
+// dimension value. Powers the summary strip above the charts.
+func (d *DB) StatsSummary(daysBack int, filterCol, filterVal string) (requests, tokens, errors int, avgLatencyMs float64) {
+	since := time.Now().AddDate(0, 0, -daysBack).UTC().Format(time.RFC3339)
+	fc, fargs := filterClause(filterCol, filterVal)
+	d.db.QueryRow(`
+		SELECT COALESCE(COUNT(*),0),
+			COALESCE(SUM(prompt_tokens + completion_tokens),0),
+			COALESCE(SUM(CASE WHEN status >= 400 THEN 1 ELSE 0 END),0),
+			COALESCE(AVG(latency_ms),0)
+		FROM request_logs
+		WHERE time >= ?`+fc, append([]any{since}, fargs...)...).
+		Scan(&requests, &tokens, &errors, &avgLatencyMs)
+	return
 }
 
 func (d *DB) StatsByKey() ([]KeyStats, error) {

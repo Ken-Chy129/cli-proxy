@@ -173,6 +173,7 @@ function prevPage() { if (logPage > 0) { logPage--; loadLogs(); } }
 function nextPage() { logPage++; loadLogs(); }
 
 let statsRange = '7d', statsMetric = 'requests', statsDim = 'model', statsData = null;
+let statsFilter = { dim: '', val: '' };
 
 function setActive(groupId, btn) {
   document.querySelectorAll('#' + groupId + ' button').forEach(b => b.classList.remove('active'));
@@ -183,17 +184,59 @@ async function loadStats(range, btn) {
   if (range) statsRange = range;
   if (btn) setActive('stats-range', btn);
   const tz = -new Date().getTimezoneOffset(); // minutes east of UTC
-  const r = await apiFetch('/api/stats?range=' + statsRange + '&tz=' + tz);
+  const q = '/api/stats?range=' + statsRange + '&tz=' + tz +
+    '&dim=' + encodeURIComponent(statsFilter.dim) + '&val=' + encodeURIComponent(statsFilter.val);
+  const r = await apiFetch(q);
   if (r.status === 401) { window.location.href = '/login'; return; }
   statsData = await r.json();
-  renderCalendar();
+  populateFilter();
+  renderSummary();
   renderTrend();
   renderBreakdown();
+  renderCalendar();
 }
 
 function setRange(range, btn) { loadStats(range, btn); }
-function setMetric(metric, btn) { statsMetric = metric; setActive('metric-seg', btn); renderCalendar(); renderTrend(); renderBreakdown(); }
+function setMetric(metric, btn) { statsMetric = metric; setActive('metric-seg', btn); renderSummary(); renderTrend(); renderBreakdown(); renderCalendar(); }
 function setDimension(dim, btn) { statsDim = dim; setActive('dim-seg', btn); renderBreakdown(); }
+function setFilter(value) {
+  const i = value.indexOf(':');
+  statsFilter = i < 0 ? { dim: '', val: '' } : { dim: value.slice(0, i), val: value.slice(i + 1) };
+  loadStats();
+}
+
+const DIM_LABELS = { model: 'Model', key: 'Key', backend: 'Backend', account: 'Account' };
+
+function populateFilter() {
+  const sel = document.getElementById('stats-filter');
+  const facets = statsData.facets || {};
+  let html = '<option value="">All traffic</option>';
+  ['model', 'key', 'backend', 'account'].forEach(dim => {
+    const rows = facets[dim] || [];
+    if (!rows.length) return;
+    html += `<optgroup label="${DIM_LABELS[dim]}">` +
+      rows.map(r => `<option value="${dim}:${escAttr(r.label)}">${DIM_LABELS[dim]}: ${escHtml(r.label)}</option>`).join('') +
+      '</optgroup>';
+  });
+  sel.innerHTML = html;
+  sel.value = statsFilter.dim ? statsFilter.dim + ':' + statsFilter.val : '';
+}
+
+function escAttr(s) { return String(s).replace(/"/g, '&quot;'); }
+function escHtml(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+
+function renderSummary() {
+  if (!statsData) return;
+  const s = statsData.summary || { requests: 0, tokens: 0, errors: 0, avg_latency_ms: 0 };
+  const errPct = s.requests ? (s.errors / s.requests * 100).toFixed(1) : '0';
+  const scope = statsFilter.dim ? ` · ${DIM_LABELS[statsFilter.dim]}: ${escHtml(statsFilter.val)}` : '';
+  document.getElementById('stats-summary').innerHTML =
+    `<span><b>${s.requests.toLocaleString()}</b> requests</span>` +
+    `<span><b>${s.tokens.toLocaleString()}</b> tokens</span>` +
+    `<span><b class="${s.errors ? 'text-red' : ''}">${errPct}%</b> errors</span>` +
+    `<span><b>${Math.round(s.avg_latency_ms)}</b> ms avg</span>` +
+    `<span class="sum-scope">${statsRange}${scope}</span>`;
+}
 
 // --- axis helpers (local time, matching the tz-shifted SQLite bucket keys) ---
 const pad2 = n => String(n).padStart(2, '0');
@@ -228,7 +271,12 @@ function renderCalendar() {
   (statsData.calendar || []).forEach(c => { map[c.bucket] = c; });
   const valOf = c => statsMetric === 'tokens' ? (c.prompt_tokens + c.completion_tokens) : c.request_count;
 
-  const cell = 11, gap = 3, stride = cell + gap, topPad = 18, leftPad = 26, WEEKS = 53;
+  const gap = 3, topPad = 18, leftPad = 28, rightPad = 4, WEEKS = 53;
+  // Size cells to fill the panel width (keeps squares; re-runs on resize).
+  const W = Math.max(420, document.getElementById('calendar').clientWidth || 900);
+  const stride = (W - leftPad - rightPad) / WEEKS;
+  const cell = Math.max(6, stride - gap);
+
   const today = new Date(); today.setHours(0, 0, 0, 0);
   const end = new Date(today); end.setDate(end.getDate() + (6 - end.getDay()));   // Saturday of this week
   const start = new Date(end); start.setDate(start.getDate() - (WEEKS * 7 - 1));  // a Sunday
@@ -240,43 +288,55 @@ function renderCalendar() {
     const c = map[k];
     const v = c ? valOf(c) : 0;
     if (v > max) max = v;
-    days.push({ d: new Date(d), k, v, err: c ? c.error_count : 0 });
+    days.push({ d: new Date(d), k, v, err: c ? c.error_count : 0, future: new Date(d) > today });
   }
   const lvl = v => v <= 0 ? 0 : max <= 0 ? 0 : v <= max * 0.25 ? 1 : v <= max * 0.5 ? 2 : v <= max * 0.75 ? 3 : 4;
 
-  const W = leftPad + WEEKS * stride + 4, H = topPad + 7 * stride + 2;
+  const H = topPad + 7 * stride + 2;
   const MN = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   let cells = '', months = '', prevMonth = -1;
   days.forEach((day, i) => {
     const wk = Math.floor(i / 7), dow = i % 7;
     const x = leftPad + wk * stride, y = topPad + dow * stride;
-    const future = day.d > today;
-    const cls = future ? 'cal-future' : 'cal-l' + lvl(day.v);
-    const title = future ? '' : `<title>${day.k}: ${fmtCompact(day.v)} ${statsMetric}${day.err ? ' · ' + day.err + ' err' : ''}</title>`;
-    cells += `<rect x="${x}" y="${y}" width="${cell}" height="${cell}" rx="2" class="${cls}">${title}</rect>`;
+    const cls = day.future ? 'cal-future' : 'cal-l' + lvl(day.v);
+    cells += `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${cell.toFixed(1)}" height="${cell.toFixed(1)}" rx="2" class="${cls}"></rect>`;
     if (dow === 0) {
       const m = day.d.getMonth();
-      if (m !== prevMonth && day.d.getDate() <= 7) { months += `<text x="${x}" y="11" class="cal-axis">${MN[m]}</text>`; prevMonth = m; }
+      if (m !== prevMonth && day.d.getDate() <= 7) { months += `<text x="${x.toFixed(1)}" y="11" class="cal-axis">${MN[m]}</text>`; prevMonth = m; }
     }
   });
   const wd = [[1, 'Mon'], [3, 'Wed'], [5, 'Fri']]
-    .map(([r, t]) => `<text x="0" y="${topPad + r * stride + cell - 1}" class="cal-axis">${t}</text>`).join('');
-  document.getElementById('calendar').innerHTML =
-    `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" class="cal-svg">${months}${wd}${cells}</svg>`;
+    .map(([r, t]) => `<text x="0" y="${(topPad + r * stride + cell - 1).toFixed(1)}" class="cal-axis">${t}</text>`).join('');
+  const svg = document.getElementById('calendar');
+  svg.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" class="cal-svg"
+      onmousemove="calHover(event)" onmouseleave="calLeave()">${months}${wd}${cells}</svg>`;
+  svg._cal = { days, leftPad, topPad, stride, WEEKS };
 }
+
+function calHover(e) {
+  const wrap = document.getElementById('calendar');
+  const g = wrap._cal;
+  if (!g) return;
+  const svg = wrap.firstElementChild;
+  const rect = svg.getBoundingClientRect();
+  const x = e.clientX - rect.left, y = e.clientY - rect.top;
+  const wk = Math.floor((x - g.leftPad) / g.stride), dow = Math.floor((y - g.topPad) / g.stride);
+  const tip = document.getElementById('cal-tip');
+  if (wk < 0 || wk >= g.WEEKS || dow < 0 || dow > 6) { tip.classList.add('hidden'); return; }
+  const day = g.days[wk * 7 + dow];
+  if (!day || day.future) { tip.classList.add('hidden'); return; }
+  tip.innerHTML = `<b>${fmtCompact(day.v)}</b> ${statsMetric}<span class="tip-sub">${day.k}${day.err ? ' · ' + day.err + ' err' : ''}</span>`;
+  tip.classList.remove('hidden');
+  const wrapRect = document.getElementById('cal-wrap').getBoundingClientRect();
+  tip.style.left = Math.min(wrapRect.width - 150, e.clientX - wrapRect.left + 10) + 'px';
+  tip.style.top = (e.clientY - wrapRect.top - 8) + 'px';
+}
+function calLeave() { document.getElementById('cal-tip').classList.add('hidden'); }
 
 function renderTrend() {
   if (!statsData) return;
   document.getElementById('trend-title').textContent = (statsMetric === 'tokens' ? 'Tokens' : 'Requests') + ' over time';
-  // range-scoped readouts
   const s = statsData.series || [];
-  const reqs = s.reduce((a, p) => a + p.request_count, 0);
-  const toks = s.reduce((a, p) => a + p.prompt_tokens + p.completion_tokens, 0);
-  const errs = s.reduce((a, p) => a + p.error_count, 0);
-  document.getElementById('rd-reqs').textContent = reqs.toLocaleString();
-  document.getElementById('rd-tokens').textContent = toks.toLocaleString();
-  document.getElementById('rd-err').textContent = (reqs ? (errs / reqs * 100).toFixed(1) : '0') + '%';
-
   const pts = buildAxis(s);
   const svg = document.getElementById('trend-svg');
   const empty = document.getElementById('trend-empty');
@@ -375,13 +435,24 @@ function renderBreakdown() {
   const el = document.getElementById('breakdown-bars');
   if (!rows.length) { el.innerHTML = '<div class="chart-empty" style="position:static">No data</div>'; return; }
   const max = rows[0].val;
+  const active = statsFilter.dim === statsDim ? statsFilter.val : '';
   el.innerHTML = rows.map(r => `
-    <div class="bar-row">
-      <div class="bar-label" title="${r.label}">${r.label}</div>
+    <div class="bar-row${r.label === active ? ' bar-active' : ''}" title="Filter by ${escAttr(r.label)}" onclick="filterToBar('${escAttr(r.label)}')">
+      <div class="bar-label">${escHtml(r.label)}</div>
       <div class="bar-track"><div class="bar-fill" style="width:${Math.max(2, r.val / max * 100)}%"></div></div>
       <div class="bar-val">${fmtCompact(r.val)}</div>
       <div class="bar-err ${r.err ? 'text-red' : 'text-muted'}">${r.err}</div>
     </div>`).join('');
+}
+
+// Clicking a breakdown bar toggles a global filter on the current dimension.
+function filterToBar(label) {
+  if (statsFilter.dim === statsDim && statsFilter.val === label) {
+    statsFilter = { dim: '', val: '' }; // click again to clear
+  } else {
+    statsFilter = { dim: statsDim, val: label };
+  }
+  loadStats();
 }
 
 function setCfgStatus(text, cls) {
@@ -881,4 +952,14 @@ loadStatus();
 let lastFocusLoad = 0;
 window.addEventListener('focus', () => {
   if (Date.now() - lastFocusLoad > 30000) { lastFocusLoad = Date.now(); loadStatus(); }
+});
+
+// Width-filling charts re-render on resize while the Stats tab is visible.
+let resizeTimer = 0;
+window.addEventListener('resize', () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => {
+    const tab = document.getElementById('tab-stats');
+    if (statsData && tab && !tab.classList.contains('hidden')) { renderTrend(); renderCalendar(); }
+  }, 150);
 });

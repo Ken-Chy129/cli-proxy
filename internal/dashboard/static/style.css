@@ -189,6 +189,12 @@ tr:hover td{background:var(--accent-soft);}
 .stats-btn.active{background:var(--accent);border-color:var(--accent);color:#0c110a;box-shadow:0 0 14px -4px rgba(var(--accent-rgb),0.6);}
 .stats-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;}
 .stats-spacer{flex:1;}
+.stats-select{font-family:var(--mono);font-size:11px;background:var(--bg-0);color:var(--text-1);border:1px solid var(--border);border-radius:2px;padding:5px 9px;max-width:260px;cursor:pointer;}
+.stats-select:focus{outline:none;border-color:var(--accent);}
+.stats-select:hover{border-color:var(--border-hover);}
+.stats-summary{display:flex;flex-wrap:wrap;gap:22px;align-items:baseline;padding:12px 4px 16px;font-family:var(--mono);font-size:12px;color:var(--text-2);}
+.stats-summary b{color:var(--accent);font-weight:600;font-size:15px;font-variant-numeric:tabular-nums;margin-right:4px;}
+.stats-summary .sum-scope{margin-left:auto;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;font-size:10px;}
 /* segmented control (metric / dimension toggles) */
 .seg{display:inline-flex;border:1px solid var(--border);border-radius:2px;overflow:hidden;}
 .seg-btn{font-family:var(--display);font-size:10px;font-weight:600;letter-spacing:1px;text-transform:uppercase;padding:5px 12px;background:transparent;color:var(--text-2);border:none;border-left:1px solid var(--border);cursor:pointer;transition:all .14s;}
@@ -212,7 +218,7 @@ tr:hover td{background:var(--accent-soft);}
 /* contribution heatmap */
 .cal-head-sub{font-family:var(--mono)!important;font-size:10px!important;letter-spacing:0!important;text-transform:none!important;color:var(--text-2)!important;}
 .cal-head-sub::before{content:none!important;}
-.cal-wrap{padding:14px 16px;overflow-x:auto;}
+.cal-wrap{padding:14px 16px;position:relative;}
 .cal-svg{display:block;}
 .cal-axis{fill:var(--text-2);font-family:var(--mono);font-size:9px;}
 rect.cal-l0{fill:var(--bg-3);}
@@ -230,7 +236,9 @@ rect.cal-future{fill:transparent;}
 .cal-legend .l4{background:var(--accent);}
 /* breakdown bars */
 .bars{padding:14px 16px;display:flex;flex-direction:column;gap:9px;}
-.bar-row{display:grid;grid-template-columns:160px 1fr 70px 40px;align-items:center;gap:12px;}
+.bar-row{display:grid;grid-template-columns:160px 1fr 70px 40px;align-items:center;gap:12px;cursor:pointer;padding:2px 4px;margin:0 -4px;border-radius:2px;transition:background .12s;}
+.bar-row:hover{background:var(--accent-soft);}
+.bar-row.bar-active{background:var(--accent-soft);box-shadow:inset 2px 0 0 var(--accent);}
 .bar-label{font-family:var(--mono);font-size:12px;color:var(--text-1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .bar-track{height:14px;background:var(--bg-0);border:1px solid var(--border);border-radius:2px;overflow:hidden;}
 .bar-fill{height:100%;background:linear-gradient(90deg,var(--accent-dim),var(--accent));box-shadow:0 0 10px -3px rgba(var(--accent-rgb),0.6);}

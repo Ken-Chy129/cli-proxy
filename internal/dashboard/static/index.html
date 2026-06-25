@@ -154,28 +154,18 @@
       <button class="stats-btn" onclick="setRange('30d',this)">30d</button>
       <button class="stats-btn" onclick="setRange('all',this)">All</button>
       <div class="stats-spacer"></div>
+      <select id="stats-filter" class="stats-select" onchange="setFilter(this.value)"></select>
       <div class="seg" id="metric-seg">
         <button class="seg-btn active" onclick="setMetric('requests',this)">Requests</button>
         <button class="seg-btn" onclick="setMetric('tokens',this)">Tokens</button>
       </div>
     </div>
 
-    <div class="panel">
-      <div class="panel-header"><span>Activity</span><span class="cal-head-sub">last 12 months</span></div>
-      <div class="cal-wrap">
-        <div id="calendar"></div>
-        <div class="cal-legend">Less<i class="cal-cell l0"></i><i class="cal-cell l1"></i><i class="cal-cell l2"></i><i class="cal-cell l3"></i><i class="cal-cell l4"></i>More</div>
-      </div>
-    </div>
+    <div class="stats-summary" id="stats-summary"></div>
 
-    <div class="panel" style="margin-top:14px">
+    <div class="panel">
       <div class="panel-header">
         <span id="trend-title">Requests over time</span>
-        <div class="trend-readouts">
-          <span><b id="rd-reqs">0</b> reqs</span>
-          <span><b id="rd-tokens">0</b> tokens</span>
-          <span><b id="rd-err">0%</b> err</span>
-        </div>
       </div>
       <div class="trend-wrap" id="trend-wrap">
         <svg id="trend-svg" class="trend-svg" onmousemove="trendHover(event)" onmouseleave="trendLeave()"></svg>
@@ -195,6 +185,15 @@
         </div>
       </div>
       <div class="bars" id="breakdown-bars"></div>
+    </div>
+
+    <div class="panel" style="margin-top:14px">
+      <div class="panel-header"><span>Activity</span><span class="cal-head-sub">all time · not affected by range</span></div>
+      <div class="cal-wrap" id="cal-wrap">
+        <div id="calendar"></div>
+        <div class="chart-tip hidden" id="cal-tip"></div>
+        <div class="cal-legend">Less<i class="cal-cell l0"></i><i class="cal-cell l1"></i><i class="cal-cell l2"></i><i class="cal-cell l3"></i><i class="cal-cell l4"></i>More</div>
+      </div>
     </div>
   </div>
 

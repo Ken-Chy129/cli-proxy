@@ -216,24 +216,54 @@ func (h *AdminHandler) Stats(c *gin.Context) {
 		tzMinutes = 0
 	}
 
-	series, _ := h.statsDB.StatsByBucket(days, tzMinutes, granularity)
-	byModel, _ := h.statsDB.StatsByDimension("model", days)
-	byKey, _ := h.statsDB.StatsByDimension("key", days)
-	byBackend, _ := h.statsDB.StatsByDimension("backend", days)
-	byAccount, _ := h.statsDB.StatsByDimension("account", days)
+	// Optional global filter: dim (model/key/backend/account) + value. Scopes
+	// the series, calendar, summary, and breakdowns — but not the facet lists
+	// that populate the filter dropdown.
+	filterDim := c.Query("dim")
+	filterVal := c.Query("val")
+	filterCol := stats.DimensionColumn(filterDim) // "" when dim is empty/unknown → no filter
+	if filterCol == "" {
+		filterVal = ""
+	}
+
+	dims := []string{"model", "key", "backend", "account"}
+	// Facets: unfiltered dimension value lists for the dropdown.
+	facets := gin.H{}
+	facetData := map[string][]stats.DimStats{}
+	for _, dim := range dims {
+		rows, _ := h.statsDB.StatsByDimension(dim, days, "", "")
+		facetData[dim] = rows
+		facets[dim] = rows
+	}
+	// Breakdowns: filtered when a filter is active, else reuse the facets.
+	breakdown := map[string][]stats.DimStats{}
+	for _, dim := range dims {
+		if filterCol != "" {
+			rows, _ := h.statsDB.StatsByDimension(dim, days, filterCol, filterVal)
+			breakdown[dim] = rows
+		} else {
+			breakdown[dim] = facetData[dim]
+		}
+	}
+
+	series, _ := h.statsDB.StatsByBucket(days, tzMinutes, granularity, filterCol, filterVal)
 	// Year-long daily buckets for the contribution heatmap (independent of the
 	// selected range; the frontend always renders ~52 weeks).
-	calendar, _ := h.statsDB.StatsByBucket(366, tzMinutes, "day")
+	calendar, _ := h.statsDB.StatsByBucket(366, tzMinutes, "day", filterCol, filterVal)
+	reqs, toks, errs, avgLat := h.statsDB.StatsSummary(days, filterCol, filterVal)
 
 	c.JSON(http.StatusOK, gin.H{
 		"range":       rangeParam,
 		"granularity": granularity,
+		"filter":      gin.H{"dim": filterDim, "val": filterVal},
+		"summary":     gin.H{"requests": reqs, "tokens": toks, "errors": errs, "avg_latency_ms": avgLat},
 		"series":      series,
-		"by_model":    byModel,
-		"by_key":      byKey,
-		"by_backend":  byBackend,
-		"by_account":  byAccount,
 		"calendar":    calendar,
+		"facets":      facets,
+		"by_model":    breakdown["model"],
+		"by_key":      breakdown["key"],
+		"by_backend":  breakdown["backend"],
+		"by_account":  breakdown["account"],
 	})
 }
 

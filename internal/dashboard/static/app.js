@@ -109,6 +109,7 @@ async function loadStatus() {
   const prev = prevModel && sel.querySelector(`option[value="${prevModel}"]:not([disabled])`);
   if (prev) prev.selected = true;
   else { const first = sel.querySelector('option:not([disabled])'); if (first) first.selected = true; }
+  if (sel._sync) sel._sync();
 }
 
 async function sendChat() {
@@ -205,7 +206,7 @@ function setFilter(value) {
   loadStats();
 }
 
-const DIM_LABELS = { model: 'Model', key: 'Key', backend: 'Backend', account: 'Account' };
+const DIM_LABELS = { model: 'Model', key: 'Key', backend: 'Backend', account: 'Account', status: 'Status' };
 
 // Custom themed dropdown (a native <select> popup can't be styled to match).
 function populateFilter() {
@@ -230,6 +231,58 @@ function toggleFilterDD(e) { e.stopPropagation(); document.getElementById('filte
 function closeFilterDD() { const p = document.getElementById('filter-panel'); if (p) p.classList.add('hidden'); }
 function pickFilter(value) { closeFilterDD(); setFilter(value); }
 document.addEventListener('click', closeFilterDD);
+
+// enhanceSelect wraps a native <select> in a themed dropdown, keeping the
+// <select> as the source of truth (options/value/onchange untouched). Reads
+// options live on open, so dynamically-repopulated selects just need _sync().
+function enhanceSelect(sel) {
+  if (sel._enhanced) return;
+  sel._enhanced = true;
+  sel.classList.add('dd-native');
+  const dd = document.createElement('div');
+  dd.className = 'dd' + (sel.classList.contains('model-select') ? ' dd-grow' : '');
+  const trigger = document.createElement('button');
+  trigger.type = 'button';
+  trigger.className = 'dd-trigger';
+  const label = document.createElement('span');
+  label.className = 'dd-trigger-label';
+  const caret = document.createElement('span');
+  caret.className = 'dd-caret';
+  caret.textContent = '▾';
+  trigger.append(label, caret);
+  const panel = document.createElement('div');
+  panel.className = 'dd-panel hidden';
+  dd.append(trigger, panel);
+  sel.after(dd);
+  const sync = () => { const o = sel.options[sel.selectedIndex]; label.textContent = o ? o.textContent : ''; };
+  const addOpt = o => {
+    const el = document.createElement('div');
+    el.className = 'dd-opt' + (o.selected ? ' sel' : '') + (o.disabled ? ' dis' : '');
+    el.textContent = o.textContent;
+    if (!o.disabled) el.onclick = e => {
+      e.stopPropagation();
+      sel.value = o.value; sync();
+      panel.classList.add('hidden');
+      sel.dispatchEvent(new Event('change'));
+    };
+    panel.append(el);
+  };
+  trigger.onclick = e => {
+    e.stopPropagation();
+    panel.innerHTML = '';
+    [...sel.children].forEach(node => {
+      if (node.tagName === 'OPTGROUP') {
+        const g = document.createElement('div'); g.className = 'dd-group'; g.textContent = node.label;
+        panel.append(g);
+        [...node.children].forEach(addOpt);
+      } else if (node.tagName === 'OPTION') addOpt(node);
+    });
+    panel.classList.toggle('hidden');
+  };
+  document.addEventListener('click', () => panel.classList.add('hidden'));
+  sel._sync = sync;
+  sync();
+}
 
 function escAttr(s) { return String(s).replace(/"/g, '&quot;'); }
 function escHtml(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
@@ -439,24 +492,45 @@ function trendLeave() {
   ['trend-guide', 'trend-dot', 'trend-tip'].forEach(id => document.getElementById(id)?.classList.add('hidden'));
 }
 
+const STATUS_LABELS = {
+  '400': 'Bad request', '401': 'Unauthorized', '403': 'Forbidden', '404': 'Not found',
+  '408': 'Timeout', '413': 'Payload too large', '422': 'Unprocessable', '429': 'Rate limited',
+  '500': 'Server error', '502': 'Bad gateway', '503': 'Unavailable', '504': 'Gateway timeout', '529': 'Overloaded'
+};
+
 function renderBreakdown() {
   if (!statsData) return;
+  const isStatus = statsDim === 'status';
+  // The status (errors) breakdown always counts failed requests; other
+  // dimensions follow the active metric.
   const rows = (statsData['by_' + statsDim] || []).slice()
-    .map(r => ({ label: r.label, val: statsMetric === 'tokens' ? r.total_tokens : statsMetric === 'errors' ? r.error_count : r.request_count, err: r.error_count }))
+    .map(r => ({
+      label: r.label,
+      val: isStatus ? r.request_count : statsMetric === 'tokens' ? r.total_tokens : statsMetric === 'errors' ? r.error_count : r.request_count,
+      err: r.error_count,
+    }))
     .filter(r => r.val > 0)
     .sort((a, b) => b.val - a.val)
     .slice(0, 20);
   const el = document.getElementById('breakdown-bars');
-  if (!rows.length) { el.innerHTML = '<div class="chart-empty" style="position:static">No data</div>'; return; }
+  if (!rows.length) {
+    el.innerHTML = `<div class="chart-empty" style="position:static">${isStatus ? 'No errors in range' : 'No data'}</div>`;
+    return;
+  }
   const max = rows[0].val;
   const active = statsFilter.dim === statsDim ? statsFilter.val : '';
-  el.innerHTML = rows.map(r => `
+  el.classList.toggle('bars-err', isStatus);
+  el.innerHTML = rows.map(r => {
+    const disp = isStatus ? `${escHtml(r.label)}${STATUS_LABELS[r.label] ? ' · ' + STATUS_LABELS[r.label] : ''}` : escHtml(r.label);
+    const tail = isStatus ? '' : `<div class="bar-err ${r.err ? 'text-red' : 'text-muted'}">${r.err}</div>`;
+    return `
     <div class="bar-row${r.label === active ? ' bar-active' : ''}" title="Filter by ${escAttr(r.label)}" onclick="filterToBar('${escAttr(r.label)}')">
-      <div class="bar-label">${escHtml(r.label)}</div>
+      <div class="bar-label">${disp}</div>
       <div class="bar-track"><div class="bar-fill" style="width:${Math.max(2, r.val / max * 100)}%"></div></div>
       <div class="bar-val">${fmtCompact(r.val)}</div>
-      <div class="bar-err ${r.err ? 'text-red' : 'text-muted'}">${r.err}</div>
-    </div>`).join('');
+      ${tail}
+    </div>`;
+  }).join('');
 }
 
 // Clicking a breakdown bar toggles a global filter on the current dimension.
@@ -961,6 +1035,8 @@ document.addEventListener('keydown', (e) => {
     document.querySelectorAll('.modal-overlay.show').forEach((o) => o.classList.remove('show'));
   }
 });
+
+document.querySelectorAll('.model-select, .image-select').forEach(enhanceSelect);
 
 loadStatus();
 let lastFocusLoad = 0;

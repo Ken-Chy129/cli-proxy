@@ -76,6 +76,7 @@ var dimensionColumns = map[string]string{
 	"backend": "backend",
 	"key":     "api_key_name",
 	"account": "account",
+	"status":  "status", // error categorization; only failed rows (status >= 400)
 }
 
 // DimensionColumn resolves a dimension name (model/key/backend/account) to its
@@ -303,13 +304,18 @@ func (d *DB) StatsByDimension(dimension string, daysBack int, filterCol, filterV
 		return nil, fmt.Errorf("unknown dimension %q", dimension)
 	}
 	since := time.Now().AddDate(0, 0, -daysBack).UTC().Format(time.RFC3339)
+	colExpr := col
 	where := "time >= ?"
 	if dimension == "key" || dimension == "account" {
 		where += " AND " + col + " != ''"
 	}
+	if dimension == "status" {
+		colExpr = "CAST(status AS TEXT)" // numeric code → text label
+		where += " AND status >= 400"    // only failed requests
+	}
 	fc, fargs := filterClause(filterCol, filterVal)
 	rows, err := d.db.Query(`
-		SELECT `+col+` as label,
+		SELECT `+colExpr+` as label,
 			COUNT(*),
 			COALESCE(SUM(prompt_tokens + completion_tokens), 0),
 			COALESCE(SUM(CASE WHEN status >= 400 THEN 1 ELSE 0 END), 0),

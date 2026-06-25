@@ -251,6 +251,8 @@ func (h *AdminHandler) Stats(c *gin.Context) {
 	// selected range; the frontend always renders ~52 weeks).
 	calendar, _ := h.statsDB.StatsByBucket(366, tzMinutes, "day", filterCol, filterVal)
 	reqs, toks, errs, avgLat := h.statsDB.StatsSummary(days, filterCol, filterVal)
+	// Error breakdown by HTTP status code (failed rows only).
+	byStatus, _ := h.statsDB.StatsByDimension("status", days, filterCol, filterVal)
 
 	c.JSON(http.StatusOK, gin.H{
 		"range":       rangeParam,
@@ -264,6 +266,7 @@ func (h *AdminHandler) Stats(c *gin.Context) {
 		"by_key":      breakdown["key"],
 		"by_backend":  breakdown["backend"],
 		"by_account":  breakdown["account"],
+		"by_status":   byStatus,
 	})
 }
 

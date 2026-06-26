@@ -19,9 +19,11 @@ async function loadStatus() {
   if (statusBooted) el.classList.add('no-anim');
   statusBooted = true;
   el.innerHTML = d.backends.map(b => {
-    const bc = b.status === 'active' ? 'badge-active' : b.status === 'expired' ? 'badge-expired' : 'badge-inactive';
-    const bl = b.status === 'active' ? 'Active' : b.status === 'expired' ? 'Expired' : 'Offline';
-    const dc = b.status === 'active' ? 'dot-green' : b.status === 'expired' ? 'dot-yellow' : 'dot-gray';
+    // A manually paused backend reads "Paused", not "Offline" (which means
+    // unconfigured/unreachable).
+    const bc = b.disabled ? 'badge-inactive' : b.status === 'active' ? 'badge-active' : b.status === 'expired' ? 'badge-expired' : 'badge-inactive';
+    const bl = b.disabled ? 'Paused' : b.status === 'active' ? 'Active' : b.status === 'expired' ? 'Expired' : 'Offline';
+    const dc = b.disabled ? 'dot-gray' : b.status === 'active' ? 'dot-green' : b.status === 'expired' ? 'dot-yellow' : 'dot-gray';
     const isOAuth = b.name === 'claude' || b.name === 'codex';
     let accts = '';
     if (b.accounts && b.accounts.length) {
@@ -165,7 +167,7 @@ async function loadLogs() {
     const foTag = l.failover_from
       ? ` <span style="color:var(--yellow);font-size:10px;cursor:help" title="failed over from: ${l.failover_from}">↩</span>`
       : '';
-    const errRow = l.error ? `<tr><td colspan="7" style="padding:2px 12px 8px;font-size:11px;color:var(--red);border:none">${l.error}</td></tr>` : '';
+    const errRow = l.error ? `<tr class="log-err-row"><td colspan="7"><div class="log-err" title="${escAttr(l.error)}">${escHtml(l.error)}</div></td></tr>` : '';
     return `<tr><td class="text-muted text-mono">${t}</td><td class="text-mono">${l.model}${keyTag}</td><td class="text-muted">${l.backend}</td><td class="text-muted text-mono" style="font-size:11px" title="${acct}${l.failover_from ? ' (failover from ' + l.failover_from + ')' : ''}">${acct}${foTag}</td><td>${l.latency_ms}ms</td><td>${tok}</td><td class="${sc}">${l.status}</td></tr>${errRow}`;
   }).join('') || '<tr><td colspan="6" class="text-muted" style="text-align:center;padding:24px">No requests yet</td></tr>';
 }

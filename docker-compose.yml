@@ -1,0 +1,17 @@
+services:
+  llm-proxy:
+    build: .
+    image: llm-proxy:local
+    container_name: llm-proxy
+    restart: unless-stopped
+    # Bound to loopback only — Caddy on the host terminates TLS and reverse-proxies
+    # to 127.0.0.1:9090. Never expose 9090 publicly.
+    ports:
+      - "127.0.0.1:9090:9090"
+    environment:
+      # Vertex AI ADC credentials live inside the data volume.
+      - GOOGLE_APPLICATION_CREDENTIALS=/data/gcp-adc.json
+    volumes:
+      # Single persistent volume: config.yaml + OAuth tokens + keys.json + stats.db
+      # + gcp-adc.json all live here. token_dir in config.yaml must be /data.
+      - /root/.llm-proxy:/data

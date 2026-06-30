@@ -154,7 +154,7 @@ func (e *ClaudeOAuthExecutor) ExecuteStream(ctx context.Context, req *types.Chat
 			return nil, err
 		}
 		e.applyHeaders(httpReq, token)
-		log.Printf("[DEBUG-CHAT] headers: %v", httpReq.Header)
+		log.Printf("[DEBUG-CHAT] headers: %v", redactHeaders(httpReq.Header))
 		return httpReq, nil
 	})
 	if err != nil {
@@ -350,13 +350,28 @@ func (e *ClaudeOAuthExecutor) OpenAnthropicStream(ctx context.Context, body []by
 			return nil, err
 		}
 		applyAnthropicPassthroughHeaders(httpReq, token, clientHeaders)
-		log.Printf("[DEBUG-PASSTHROUGH] headers: %v", httpReq.Header)
+		log.Printf("[DEBUG-PASSTHROUGH] headers: %v", redactHeaders(httpReq.Header))
 		return httpReq, nil
 	})
 	if err != nil {
 		return nil, 0, fmt.Errorf("claude oauth stream request: %w", err)
 	}
 	return resp.Body, resp.StatusCode, nil
+}
+
+// redactHeaders returns a shallow copy of h with credential-bearing headers
+// masked, so debug logs never persist upstream tokens or client API keys.
+func redactHeaders(h http.Header) http.Header {
+	out := make(http.Header, len(h))
+	for k, v := range h {
+		switch strings.ToLower(k) {
+		case "authorization", "x-api-key", "cookie":
+			out[k] = []string{"***REDACTED***"}
+		default:
+			out[k] = v
+		}
+	}
+	return out
 }
 
 func applyAnthropicPassthroughHeaders(req *http.Request, token string, clientHeaders http.Header) {

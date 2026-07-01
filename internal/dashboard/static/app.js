@@ -69,7 +69,9 @@ async function loadStatus() {
 
   // Render per-account quota cards
   let allQuotas = [];
-  d.backends.forEach(b => { if (b.quotas) allQuotas = allQuotas.concat(b.quotas); });
+  d.backends.forEach(b => {
+    if (b.quotas) allQuotas = allQuotas.concat(b.quotas.map(q => ({...q, provider: b.name})));
+  });
   const qSection = document.getElementById('quota-section');
   const qGrid = document.getElementById('quota-grid');
   if (allQuotas.length) {
@@ -89,11 +91,12 @@ async function loadStatus() {
         rows = renderRow(q.primary) + renderRow(q.secondary);
         if (q.additional) { q.additional.forEach(a => { if (a.primary) rows += renderRow(a.primary); }); }
       } else {
-        rows = `<div style="font-size:12px;color:var(--text-2);padding:4px 0">No quota data yet — click <span style="color:var(--accent);cursor:pointer" onclick="refreshQuota('${q.account_id}')">&#8635; refresh</span> to fetch</div>`;
+        rows = `<div style="font-size:12px;color:var(--text-2);padding:4px 0">No quota data yet — click <span style="color:var(--accent);cursor:pointer" onclick="refreshQuota('${q.provider}','${q.account_id}')">&#8635; refresh</span> to fetch</div>`;
       }
-      const refreshBtn = `<button class="btn-delete" style="font-size:11px;color:var(--accent)" onclick="refreshQuota('${q.account_id}')">&#8635;</button>`;
+      const refreshBtn = `<button class="btn-delete" style="font-size:11px;color:var(--accent)" onclick="refreshQuota('${q.provider}','${q.account_id}')">&#8635;</button>`;
       const fetchedAt = q.fetched_at ? `<span style="font-size:10px;color:var(--text-2);margin-left:auto">cached ${q.fetched_at}</span>` : '';
-      return `<div class="quota-card" data-account="${q.account_id}"><div class="quota-card-header"><span class="model-tag" style="background:var(--accent-dim);color:var(--text-0)">Codex</span><span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${displayName}</span>${refreshBtn}</div><div style="display:flex;align-items:center;gap:6px;margin-bottom:8px"><span class="plan-badge ${planCls}">${planLabel}</span>${fetchedAt}</div>${rows}</div>`;
+      const providerLabel = (q.provider || '').charAt(0).toUpperCase() + (q.provider || '').slice(1);
+      return `<div class="quota-card" data-provider="${q.provider}" data-account="${q.account_id}"><div class="quota-card-header"><span class="model-tag" style="background:var(--accent-dim);color:var(--text-0)">${providerLabel}</span><span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${displayName}</span>${refreshBtn}</div><div style="display:flex;align-items:center;gap:6px;margin-bottom:8px"><span class="plan-badge ${planCls}">${planLabel}</span>${fetchedAt}</div>${rows}</div>`;
     }).join('');
   } else {
     qSection.style.display = 'none';
@@ -821,11 +824,11 @@ async function removeVertexCredentials() {
   loadStatus();
 }
 
-async function refreshQuota(accountId) {
-  const card = document.querySelector('[data-account="' + accountId + '"]');
+async function refreshQuota(provider, accountId) {
+  const card = document.querySelector('[data-provider="' + provider + '"][data-account="' + accountId + '"]');
   if (card) card.style.opacity = '0.5';
   try {
-    await apiFetch('/api/refresh-quota/codex/' + encodeURIComponent(accountId), { method: 'POST' });
+    await apiFetch('/api/refresh-quota/' + encodeURIComponent(provider) + '/' + encodeURIComponent(accountId), { method: 'POST' });
   } finally {
     if (card) card.style.opacity = '1';
     loadStatus();

@@ -62,6 +62,10 @@ func main() {
 		claudeExec = executor.NewClaudeOAuthExecutor(claudeOAuth, models)
 		r.Register(claudeExec, "claude")
 		log.Printf("registered claude oauth executor: %v", models)
+		if len(tokenStore.AllForProvider("claude")) > 0 {
+			log.Printf("fetching claude quotas for %d accounts...", len(tokenStore.AllForProvider("claude")))
+			claudeOAuth.FetchAllQuotas(context.Background())
+		}
 	}
 
 	// Codex OAuth: try to dynamically fetch models, fall back to config

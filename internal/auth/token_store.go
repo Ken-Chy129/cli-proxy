@@ -11,13 +11,15 @@ import (
 )
 
 type TokenData struct {
-	ID           string `json:"id"`
-	Provider     string `json:"provider"`
-	AccessToken  string `json:"access_token"`
-	RefreshToken string `json:"refresh_token"`
-	Email        string `json:"email,omitempty"`
-	ExpiresAt    string `json:"expires_at"`
-	FileName     string `json:"-"` // actual filename on disk, tracked for correct deletion
+	ID               string `json:"id"`
+	Provider         string `json:"provider"`
+	AccessToken      string `json:"access_token"`
+	RefreshToken     string `json:"refresh_token"`
+	Email            string `json:"email,omitempty"`
+	OrganizationID   string `json:"organization_id,omitempty"`
+	OrganizationName string `json:"organization_name,omitempty"`
+	ExpiresAt        string `json:"expires_at"`
+	FileName         string `json:"-"` // actual filename on disk, tracked for correct deletion
 }
 
 func (t *TokenData) IsExpired() bool {

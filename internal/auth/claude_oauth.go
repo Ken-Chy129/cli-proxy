@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -127,11 +129,13 @@ func (o *ClaudeOAuth) refresh(ctx context.Context, token *TokenData) (string, er
 	}
 
 	newToken := &TokenData{
-		Provider:     "claude",
-		AccessToken:  tokenResp.AccessToken,
-		RefreshToken: tokenResp.RefreshToken,
-		Email:        tokenResp.Account.Email,
-		ExpiresAt:    time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second).Format(time.RFC3339),
+		Provider:         "claude",
+		AccessToken:      tokenResp.AccessToken,
+		RefreshToken:     tokenResp.RefreshToken,
+		Email:            tokenResp.Account.Email,
+		OrganizationID:   tokenResp.Organization.UUID,
+		OrganizationName: tokenResp.Organization.Name,
+		ExpiresAt:        time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second).Format(time.RFC3339),
 	}
 	o.store.Add(newToken)
 	fmt.Printf("claude token refreshed for %s\n", newToken.Email)
@@ -317,10 +321,330 @@ func (o *ClaudeOAuth) exchangeCode(ctx context.Context, code, codeVerifier, stat
 	}
 
 	return &TokenData{
-		Provider:     "claude",
-		AccessToken:  tokenResp.AccessToken,
-		RefreshToken: tokenResp.RefreshToken,
-		Email:        tokenResp.Account.Email,
-		ExpiresAt:    time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second).Format(time.RFC3339),
+		Provider:         "claude",
+		AccessToken:      tokenResp.AccessToken,
+		RefreshToken:     tokenResp.RefreshToken,
+		Email:            tokenResp.Account.Email,
+		OrganizationID:   tokenResp.Organization.UUID,
+		OrganizationName: tokenResp.Organization.Name,
+		ExpiresAt:        time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second).Format(time.RFC3339),
 	}, nil
+}
+
+const claudeAppBaseURL = "https://claude.ai/api"
+
+func applyClaudeUsageHeaders(req *http.Request, token string) {
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "claude-cli/2.1.181 (external, cli)")
+	req.Header.Set("Accept-Encoding", "identity")
+}
+
+// FetchAllQuotas fetches Claude account usage limits for every active account.
+func (o *ClaudeOAuth) FetchAllQuotas(ctx context.Context) {
+	for _, acc := range o.store.AllForProvider("claude") {
+		if acc.IsExpired() {
+			if _, err := o.refresh(ctx, acc); err != nil {
+				continue
+			}
+			acc = o.store.GetByID("claude", acc.ID)
+			if acc == nil {
+				continue
+			}
+		}
+		o.fetchQuotaForAccount(ctx, acc)
+	}
+}
+
+// FetchQuotaForAccountByID fetches Claude usage limits for a single account.
+func (o *ClaudeOAuth) FetchQuotaForAccountByID(ctx context.Context, accountID string) error {
+	acc := o.store.GetByID("claude", accountID)
+	if acc == nil {
+		return fmt.Errorf("account %s not found", accountID)
+	}
+	if acc.IsExpired() {
+		if _, err := o.refresh(ctx, acc); err != nil {
+			return err
+		}
+		acc = o.store.GetByID("claude", accountID)
+		if acc == nil {
+			return fmt.Errorf("account %s not found after refresh", accountID)
+		}
+	}
+	if err := o.fetchQuotaForAccount(ctx, acc); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (o *ClaudeOAuth) fetchQuotaForAccount(ctx context.Context, acc *TokenData) error {
+	email := acc.Email
+	planType := strings.TrimSpace(acc.OrganizationName)
+	if planType == "" {
+		planType = "Claude"
+	}
+	if acc.OrganizationID == "" {
+		if orgID, orgName, err := o.discoverOrganization(ctx, acc.AccessToken); err == nil && orgID != "" {
+			acc.OrganizationID = orgID
+			if orgName != "" {
+				acc.OrganizationName = orgName
+				planType = orgName
+			}
+			o.store.Add(acc)
+		}
+	}
+
+	var urls []string
+	if acc.OrganizationID != "" {
+		org := url.PathEscape(acc.OrganizationID)
+		urls = append(urls,
+			claudeAppBaseURL+"/organizations/"+org+"/usage_limits",
+			claudeAppBaseURL+"/organizations/"+org+"/usage",
+			claudeAppBaseURL+"/organizations/"+org+"/limits",
+		)
+	}
+	urls = append(urls,
+		claudeAppBaseURL+"/usage_limits",
+		claudeAppBaseURL+"/usage",
+	)
+
+	var lastErr error
+	for _, endpoint := range urls {
+		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+		applyClaudeUsageHeaders(req, acc.AccessToken)
+		resp, err := o.httpClient.Do(req)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			lastErr = fmt.Errorf("fetch claude usage: %d", resp.StatusCode)
+			continue
+		}
+		info, err := ParseClaudeUsageLimits(body)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		info.AccountID = acc.ID
+		info.Email = email
+		info.PlanType = planType
+		info.HasRealData = true
+		QuotaCache.Set("claude:"+acc.ID, info)
+		return nil
+	}
+
+	if existing := QuotaCache.Get("claude:" + acc.ID); existing != nil && existing.HasRealData {
+		return lastErr
+	}
+	QuotaCache.Set("claude:"+acc.ID, &QuotaInfo{AccountID: acc.ID, Email: email, PlanType: planType, HasRealData: false})
+	return lastErr
+}
+
+func (o *ClaudeOAuth) discoverOrganization(ctx context.Context, token string) (string, string, error) {
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, claudeAppBaseURL+"/organizations", nil)
+	applyClaudeUsageHeaders(req, token)
+	resp, err := o.httpClient.Do(req)
+	if err != nil {
+		return "", "", err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return "", "", fmt.Errorf("fetch claude organizations: %d", resp.StatusCode)
+	}
+	var raw any
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return "", "", err
+	}
+	return firstClaudeOrganization(raw)
+}
+
+func firstClaudeOrganization(v any) (string, string, error) {
+	switch t := v.(type) {
+	case []any:
+		for _, child := range t {
+			if id, name, err := firstClaudeOrganization(child); err == nil && id != "" {
+				return id, name, nil
+			}
+		}
+	case map[string]any:
+		id := firstString(t, "uuid", "id", "organization_id")
+		name := firstString(t, "name", "display_name")
+		if id != "" {
+			return id, name, nil
+		}
+		for _, key := range []string{"organizations", "data", "items"} {
+			if child, ok := t[key]; ok {
+				if id, name, err := firstClaudeOrganization(child); err == nil && id != "" {
+					return id, name, nil
+				}
+			}
+		}
+	}
+	return "", "", fmt.Errorf("no claude organization found")
+}
+
+// ParseClaudeUsageLimits converts Claude's account usage-limit payload into the
+// shared quota shape. The web payload has changed over time, so this parser
+// accepts common field aliases instead of binding to one exact schema.
+func ParseClaudeUsageLimits(body []byte) (*QuotaInfo, error) {
+	var raw any
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return nil, err
+	}
+
+	var windows []*RateWindow
+	collectClaudeRateWindows(raw, "", &windows)
+	if len(windows) == 0 {
+		return nil, fmt.Errorf("no usage windows in claude usage response")
+	}
+
+	info := &QuotaInfo{}
+	info.Primary = windows[0]
+	if len(windows) > 1 {
+		info.Secondary = windows[1]
+	}
+	for i := 2; i < len(windows); i++ {
+		info.Additional = append(info.Additional, AdditionalRL{
+			Name:    windows[i].Label,
+			Primary: windows[i],
+		})
+	}
+	return info, nil
+}
+
+func collectClaudeRateWindows(v any, keyHint string, out *[]*RateWindow) {
+	switch t := v.(type) {
+	case map[string]any:
+		if w, ok := claudeRateWindowFromMap(t, keyHint); ok {
+			*out = append(*out, w)
+		}
+		for k, child := range t {
+			collectClaudeRateWindows(child, k, out)
+		}
+	case []any:
+		for _, child := range t {
+			collectClaudeRateWindows(child, keyHint, out)
+		}
+	}
+}
+
+func claudeRateWindowFromMap(m map[string]any, keyHint string) (*RateWindow, bool) {
+	used, ok := firstFloat(m, "used_percent", "usage_percent", "percent_used", "used_percentage", "percentage_used")
+	if !ok {
+		if frac, fracOK := firstFloat(m, "used_fraction", "usage_fraction"); fracOK {
+			used = frac * 100
+			ok = true
+		}
+	}
+	if !ok {
+		usedValue, hasUsed := firstFloat(m, "used", "usage", "used_tokens", "used_messages")
+		limitValue, hasLimit := firstFloat(m, "limit", "quota", "max", "max_tokens", "max_messages")
+		if hasUsed && hasLimit && limitValue > 0 {
+			used = usedValue / limitValue * 100
+			ok = true
+		}
+	}
+	if !ok {
+		return nil, false
+	}
+
+	remaining := math.Max(0, math.Round((100-used)*100)/100)
+	label := firstString(m, "label", "name", "limit_name", "display_name", "title")
+	if label == "" {
+		label = claudeWindowLabel(keyHint, m)
+	}
+	resetAt := claudeResetAt(m)
+	limitReached := used >= 100
+	if b, has := firstBool(m, "limit_reached", "limited", "is_limited", "exceeded"); has {
+		limitReached = b
+	}
+	return &RateWindow{
+		Label:            label,
+		RemainingPercent: remaining,
+		LimitReached:     limitReached,
+		ResetAt:          resetAt,
+	}, true
+}
+
+func claudeWindowLabel(keyHint string, m map[string]any) string {
+	lower := strings.ToLower(keyHint)
+	if strings.Contains(lower, "session") {
+		return "Current session"
+	}
+	if strings.Contains(lower, "week") || strings.Contains(lower, "weekly") {
+		if model := firstString(m, "model", "model_name"); model != "" {
+			return model + " weekly"
+		}
+		return "Weekly limit"
+	}
+	if model := firstString(m, "model", "model_name"); model != "" {
+		return model
+	}
+	return "Usage limit"
+}
+
+func claudeResetAt(m map[string]any) string {
+	for _, key := range []string{"reset_at", "resets_at", "reset_time", "reset"} {
+		if s := firstString(m, key); s != "" {
+			if ts, err := strconv.ParseFloat(s, 64); err == nil {
+				return formatResetAt(ts)
+			}
+			if t, err := time.Parse(time.RFC3339, s); err == nil {
+				return t.Local().Format("01/02 15:04")
+			}
+			return s
+		}
+	}
+	if ts, ok := firstFloat(m, "reset_at", "resets_at"); ok {
+		return formatResetAt(ts)
+	}
+	if secs, ok := firstFloat(m, "reset_after_seconds", "resets_in_seconds"); ok {
+		return time.Now().Add(time.Duration(secs) * time.Second).Format("01/02 15:04")
+	}
+	return ""
+}
+
+func firstFloat(m map[string]any, keys ...string) (float64, bool) {
+	for _, key := range keys {
+		if v, ok := m[key]; ok {
+			switch n := v.(type) {
+			case float64:
+				return n, true
+			case int:
+				return float64(n), true
+			case string:
+				if parsed, err := strconv.ParseFloat(n, 64); err == nil {
+					return parsed, true
+				}
+			}
+		}
+	}
+	return 0, false
+}
+
+func firstString(m map[string]any, keys ...string) string {
+	for _, key := range keys {
+		if v, ok := m[key]; ok {
+			if s, ok := v.(string); ok {
+				return strings.TrimSpace(s)
+			}
+		}
+	}
+	return ""
+}
+
+func firstBool(m map[string]any, keys ...string) (bool, bool) {
+	for _, key := range keys {
+		if v, ok := m[key]; ok {
+			if b, ok := v.(bool); ok {
+				return b, true
+			}
+		}
+	}
+	return false, false
 }

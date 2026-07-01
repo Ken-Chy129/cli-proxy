@@ -8,12 +8,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"github.com/Ken-Chy129/llm-proxy/internal/auth"
 	"github.com/Ken-Chy129/llm-proxy/internal/config"
 	"github.com/Ken-Chy129/llm-proxy/internal/executor"
 	"github.com/Ken-Chy129/llm-proxy/internal/router"
 	"github.com/Ken-Chy129/llm-proxy/internal/stats"
+	"github.com/gin-gonic/gin"
 )
 
 type AdminHandler struct {
@@ -154,10 +154,10 @@ func (h *AdminHandler) Status(c *gin.Context) {
 			"disabled": disabled,
 		}
 		// Per-account quotas
-		if p.name == "codex" {
+		if p.name == "claude" || p.name == "codex" {
 			var quotas []*auth.QuotaInfo
 			for _, a := range accounts {
-				if q := auth.QuotaCache.Get("codex:" + a.ID); q != nil {
+				if q := auth.QuotaCache.Get(p.name + ":" + a.ID); q != nil {
 					quotas = append(quotas, q)
 				}
 			}
@@ -171,8 +171,8 @@ func (h *AdminHandler) Status(c *gin.Context) {
 	totalReqs, totalTokens, _ := h.statsDB.TotalStats()
 
 	c.JSON(http.StatusOK, gin.H{
-		"backends":     backends,
-		"all_models":   h.router.AllModels(),
+		"backends":       backends,
+		"all_models":     h.router.AllModels(),
 		"total_requests": totalReqs,
 		"total_tokens":   totalTokens,
 	})
@@ -433,6 +433,10 @@ func (h *AdminHandler) SyncModels(c *gin.Context) {
 		// Refresh all account quotas
 		h.codexOAuth.FetchAllQuotas(c.Request.Context())
 	}
+	if h.claudeOAuth != nil {
+		h.claudeOAuth.FetchAllQuotas(c.Request.Context())
+		results["claude"] = gin.H{"quotas": "refreshed"}
+	}
 
 	c.JSON(http.StatusOK, results)
 }
@@ -446,6 +450,15 @@ func (h *AdminHandler) RefreshQuota(c *gin.Context) {
 			return
 		}
 		q := auth.QuotaCache.Get("codex:" + id)
+		c.JSON(http.StatusOK, gin.H{"ok": true, "quota": q})
+		return
+	}
+	if provider == "claude" && h.claudeOAuth != nil {
+		if err := h.claudeOAuth.FetchQuotaForAccountByID(c.Request.Context(), id); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		q := auth.QuotaCache.Get("claude:" + id)
 		c.JSON(http.StatusOK, gin.H{"ok": true, "quota": q})
 		return
 	}

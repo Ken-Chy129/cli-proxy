@@ -217,7 +217,7 @@
         <span>API Keys</span>
         <button class="btn-add" style="margin-top:0" onclick="openCreateKey()">+ Create Key</button>
       </div>
-      <table><thead><tr><th>Name</th><th>Key</th><th>Requests</th><th>Tokens Today</th><th>Total Tokens</th><th>Daily Limit</th><th>Actions</th></tr></thead>
+      <table><thead><tr><th>Name</th><th>Key</th><th>Requests</th><th>Requests Today</th><th>Tokens Today</th><th>Total Tokens</th><th>Daily Limit</th><th>Actions</th></tr></thead>
       <tbody id="keys-body"></tbody></table>
     </div>
   </div>
@@ -282,6 +282,10 @@
         <div>
           <label>Daily Token Limit <span class="text-muted">(0 = unlimited)</span></label>
           <input id="key-limit" type="number" min="0" value="0">
+        </div>
+        <div>
+          <label>Daily Request Limit <span class="text-muted">(0 = unlimited)</span></label>
+          <input id="key-req-limit" type="number" min="0" value="0">
         </div>
       </div>
     </div>

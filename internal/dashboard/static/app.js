@@ -997,22 +997,29 @@ async function loadKeys() {
   keysCache = d.keys || [];
   const body = document.getElementById('keys-body');
   if (!d.keys || !d.keys.length) {
-    body.innerHTML = '<tr><td colspan="7" class="text-muted" style="text-align:center;padding:20px">No API keys yet — create one above</td></tr>';
+    body.innerHTML = '<tr><td colspan="8" class="text-muted" style="text-align:center;padding:20px">No API keys yet — create one above</td></tr>';
     return;
   }
+  const limitColorFor = (used, limit) => {
+    if (!limit) return '';
+    const pct = Math.round((used || 0) / limit * 100);
+    return pct > 90 ? 'var(--red)' : pct > 70 ? 'var(--yellow)' : '';
+  };
   body.innerHTML = d.keys.map(k => {
-    const limitStr = k.token_limit_daily ? k.token_limit_daily.toLocaleString() : '∞';
-    const pct = k.token_limit_daily ? Math.round((k.tokens_today || 0) / k.token_limit_daily * 100) : 0;
-    const limitColor = pct > 90 ? 'var(--red)' : pct > 70 ? 'var(--yellow)' : '';
+    const tokLimit = k.token_limit_daily ? k.token_limit_daily.toLocaleString() + ' tok' : '∞ tok';
+    const reqLimit = k.request_limit_daily ? k.request_limit_daily.toLocaleString() + ' req' : '∞ req';
+    const tokColor = limitColorFor(k.tokens_today, k.token_limit_daily);
+    const reqColor = limitColorFor(k.requests_today, k.request_limit_daily);
     const dis = k.disabled;
     const toggleBtn = '<button class="btn-row" style="' + (dis ? 'border-color:var(--accent);color:var(--accent)' : '') + '" onclick="toggleKey(\'' + k.id + '\')">' + (dis ? '▶ Enable' : '⏸ Disable') + '</button>';
     return '<tr style="' + (dis ? 'opacity:0.5' : '') + '">'
       + '<td class="text-mono">' + k.name + (dis ? ' <span class="key-badge">disabled</span>' : '') + '</td>'
       + '<td class="text-muted text-mono" style="font-size:11px"><span style="vertical-align:middle">' + k.key.slice(0,10) + '...' + k.key.slice(-4) + '</span> <button class="icon-btn" title="Copy key" onclick="copyKeyInline(this, \'' + k.key + '\')">&#x2398;</button></td>'
       + '<td>' + (k.request_count || 0).toLocaleString() + '</td>'
-      + '<td style="' + (limitColor ? 'color:'+limitColor : '') + '">' + (k.tokens_today || 0).toLocaleString() + '</td>'
+      + '<td style="' + (reqColor ? 'color:'+reqColor : '') + '">' + (k.requests_today || 0).toLocaleString() + '</td>'
+      + '<td style="' + (tokColor ? 'color:'+tokColor : '') + '">' + (k.tokens_today || 0).toLocaleString() + '</td>'
       + '<td>' + (k.total_tokens || 0).toLocaleString() + '</td>'
-      + '<td>' + limitStr + '</td>'
+      + '<td style="line-height:1.5"><div>' + reqLimit + '</div><div>' + tokLimit + '</div></td>'
       + '<td style="white-space:nowrap"><button class="btn-row" onclick="editKey(\'' + k.id + '\')">&#x270E; Edit</button> ' + toggleBtn + ' <button class="btn-row" onclick="deleteKey(\'' + k.id + '\')">&#x1F5D1; Delete</button></td>'
       + '</tr>';
   }).join('');
@@ -1031,6 +1038,7 @@ function editKey(id) {
   document.getElementById('create-key-fields').style.display = '';
   document.getElementById('key-name').value = k.name;
   document.getElementById('key-limit').value = k.token_limit_daily || 0;
+  document.getElementById('key-req-limit').value = k.request_limit_daily || 0;
   const btn = document.getElementById('create-key-submit');
   btn.textContent = 'Save';
   btn.setAttribute('onclick', "submitEditKey('" + id + "')");
@@ -1042,9 +1050,10 @@ async function submitEditKey(id) {
   const name = document.getElementById('key-name').value.trim();
   if (!name) { document.getElementById('key-name').focus(); return; }
   const limit = parseInt(document.getElementById('key-limit').value) || 0;
+  const reqLimit = parseInt(document.getElementById('key-req-limit').value) || 0;
   await apiFetch('/api/keys/' + id, {
     method: 'PUT', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name: name, token_limit_daily: limit })
+    body: JSON.stringify({ name: name, token_limit_daily: limit, request_limit_daily: reqLimit })
   });
   closeCreateKey();
   loadKeys();
@@ -1056,6 +1065,7 @@ function openCreateKey() {
   document.getElementById('create-key-fields').style.display = '';
   document.getElementById('key-name').value = '';
   document.getElementById('key-limit').value = '0';
+  document.getElementById('key-req-limit').value = '0';
   const btn = document.getElementById('create-key-submit');
   btn.textContent = 'Create';
   btn.setAttribute('onclick', 'submitCreateKey()');
@@ -1079,9 +1089,10 @@ async function submitCreateKey() {
   const name = document.getElementById('key-name').value.trim();
   if (!name) { document.getElementById('key-name').focus(); return; }
   const limit = parseInt(document.getElementById('key-limit').value) || 0;
+  const reqLimit = parseInt(document.getElementById('key-req-limit').value) || 0;
   const r = await apiFetch('/api/keys', {
     method: 'POST', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({name: name, token_limit_daily: limit})
+    body: JSON.stringify({name: name, token_limit_daily: limit, request_limit_daily: reqLimit})
   });
   const d = await r.json();
   if (d.key) {

@@ -542,17 +542,19 @@ func (h *AdminHandler) ListKeys(c *gin.Context) {
 	result := make([]gin.H, len(keys))
 	for i, k := range keys {
 		entry := gin.H{
-			"id":                k.ID,
-			"name":              k.Name,
-			"key":               k.Key,
-			"token_limit_daily": k.TokenLimitDaily,
-			"created_at":        k.CreatedAt,
-			"disabled":          k.Disabled,
+			"id":                  k.ID,
+			"name":                k.Name,
+			"key":                 k.Key,
+			"token_limit_daily":   k.TokenLimitDaily,
+			"request_limit_daily": k.RequestLimitDaily,
+			"created_at":          k.CreatedAt,
+			"disabled":            k.Disabled,
 		}
 		if s := statsMap[k.Name]; s != nil {
 			entry["request_count"] = s.RequestCount
 			entry["total_tokens"] = s.TotalTokens
 			entry["tokens_today"] = s.TokensToday
+			entry["requests_today"] = s.RequestsToday
 			entry["error_count"] = s.ErrorCount
 		}
 		result[i] = entry
@@ -562,14 +564,15 @@ func (h *AdminHandler) ListKeys(c *gin.Context) {
 
 func (h *AdminHandler) CreateKey(c *gin.Context) {
 	var req struct {
-		Name            string `json:"name"`
-		TokenLimitDaily int    `json:"token_limit_daily"`
+		Name              string `json:"name"`
+		TokenLimitDaily   int    `json:"token_limit_daily"`
+		RequestLimitDaily int    `json:"request_limit_daily"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil || req.Name == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "name is required"})
 		return
 	}
-	kd, err := h.keyStore.Add(req.Name, req.TokenLimitDaily)
+	kd, err := h.keyStore.Add(req.Name, req.TokenLimitDaily, req.RequestLimitDaily)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -580,14 +583,15 @@ func (h *AdminHandler) CreateKey(c *gin.Context) {
 func (h *AdminHandler) UpdateKey(c *gin.Context) {
 	id := c.Param("id")
 	var req struct {
-		Name            string `json:"name"`
-		TokenLimitDaily int    `json:"token_limit_daily"`
+		Name              string `json:"name"`
+		TokenLimitDaily   int    `json:"token_limit_daily"`
+		RequestLimitDaily int    `json:"request_limit_daily"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	if err := h.keyStore.Update(id, req.Name, req.TokenLimitDaily); err != nil {
+	if err := h.keyStore.Update(id, req.Name, req.TokenLimitDaily, req.RequestLimitDaily); err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 		return
 	}

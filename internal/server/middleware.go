@@ -66,6 +66,7 @@ func APIKeyAuth(keyStore *auth.KeyStore) gin.HandlerFunc {
 				c.Set("api_key_name", kd.Name)
 				c.Set("api_key_id", kd.ID)
 				c.Set("api_key_limit", kd.TokenLimitDaily)
+				c.Set("api_key_request_limit", kd.RequestLimitDaily)
 				c.Next()
 				return
 			}
@@ -82,35 +83,48 @@ func APIKeyAuth(keyStore *auth.KeyStore) gin.HandlerFunc {
 	}
 }
 
-// TokenLimitCheck enforces daily token limits for managed API keys.
+// TokenLimitCheck enforces daily token and request limits for managed API keys.
 func TokenLimitCheck(statsDB *stats.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		limitVal, exists := c.Get("api_key_limit")
-		if !exists {
-			c.Next()
-			return
-		}
-		limit, ok := limitVal.(int)
-		if !ok || limit <= 0 {
-			c.Next()
-			return
-		}
 		keyName, _ := c.Get("api_key_name")
 		name, _ := keyName.(string)
 		if name == "" {
 			c.Next()
 			return
 		}
-		used := statsDB.TokensTodayForKey(name)
-		if used >= limit {
-			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
-				"error": gin.H{
-					"message": fmt.Sprintf("daily token limit exceeded (%d/%d)", used, limit),
-					"type":    "rate_limit_error",
-				},
-			})
-			return
+
+		// Daily request-count limit
+		if v, exists := c.Get("api_key_request_limit"); exists {
+			if limit, ok := v.(int); ok && limit > 0 {
+				used := statsDB.RequestsTodayForKey(name)
+				if used >= limit {
+					c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
+						"error": gin.H{
+							"message": fmt.Sprintf("daily request limit exceeded (%d/%d)", used, limit),
+							"type":    "rate_limit_error",
+						},
+					})
+					return
+				}
+			}
 		}
+
+		// Daily token limit
+		if v, exists := c.Get("api_key_limit"); exists {
+			if limit, ok := v.(int); ok && limit > 0 {
+				used := statsDB.TokensTodayForKey(name)
+				if used >= limit {
+					c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
+						"error": gin.H{
+							"message": fmt.Sprintf("daily token limit exceeded (%d/%d)", used, limit),
+							"type":    "rate_limit_error",
+						},
+					})
+					return
+				}
+			}
+		}
+
 		c.Next()
 	}
 }

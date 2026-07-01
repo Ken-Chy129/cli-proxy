@@ -12,12 +12,13 @@ import (
 )
 
 type KeyData struct {
-	ID              string `json:"id"`
-	Name            string `json:"name"`
-	Key             string `json:"key"`
-	TokenLimitDaily int    `json:"token_limit_daily,omitempty"`
-	CreatedAt       string `json:"created_at"`
-	Disabled        bool   `json:"disabled,omitempty"`
+	ID                string `json:"id"`
+	Name              string `json:"name"`
+	Key               string `json:"key"`
+	TokenLimitDaily   int    `json:"token_limit_daily,omitempty"`
+	RequestLimitDaily int    `json:"request_limit_daily,omitempty"`
+	CreatedAt         string `json:"created_at"`
+	Disabled          bool   `json:"disabled,omitempty"`
 }
 
 type KeyStore struct {
@@ -68,7 +69,7 @@ func (ks *KeyStore) All() []*KeyData {
 	return cp
 }
 
-func (ks *KeyStore) Add(name string, tokenLimitDaily int) (*KeyData, error) {
+func (ks *KeyStore) Add(name string, tokenLimitDaily, requestLimitDaily int) (*KeyData, error) {
 	ks.mu.Lock()
 	defer ks.mu.Unlock()
 
@@ -78,23 +79,25 @@ func (ks *KeyStore) Add(name string, tokenLimitDaily int) (*KeyData, error) {
 
 	id := fmt.Sprintf("key_%d", time.Now().UnixMilli())
 	kd := &KeyData{
-		ID:              id,
-		Name:            name,
-		Key:             key,
-		TokenLimitDaily: tokenLimitDaily,
-		CreatedAt:       time.Now().Format(time.RFC3339),
+		ID:                id,
+		Name:              name,
+		Key:               key,
+		TokenLimitDaily:   tokenLimitDaily,
+		RequestLimitDaily: requestLimitDaily,
+		CreatedAt:         time.Now().Format(time.RFC3339),
 	}
 	ks.keys = append(ks.keys, kd)
 	return kd, ks.save()
 }
 
-func (ks *KeyStore) Update(id string, name string, tokenLimitDaily int) error {
+func (ks *KeyStore) Update(id string, name string, tokenLimitDaily, requestLimitDaily int) error {
 	ks.mu.Lock()
 	defer ks.mu.Unlock()
 	for _, k := range ks.keys {
 		if k.ID == id {
 			k.Name = name
 			k.TokenLimitDaily = tokenLimitDaily
+			k.RequestLimitDaily = requestLimitDaily
 			return ks.save()
 		}
 	}

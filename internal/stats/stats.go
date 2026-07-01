@@ -33,6 +33,7 @@ type KeyStats struct {
 	TotalTokens     int    `json:"total_tokens"`
 	ErrorCount      int    `json:"error_count"`
 	TokensToday     int    `json:"tokens_today"`
+	RequestsToday   int    `json:"requests_today"`
 }
 
 type ModelStats struct {
@@ -391,9 +392,9 @@ func (d *DB) StatsByKey() ([]KeyStats, error) {
 		var s KeyStats
 		rows.Scan(&s.KeyName, &s.RequestCount, &s.TotalTokens, &s.ErrorCount)
 		d.db.QueryRow(`
-			SELECT COALESCE(SUM(prompt_tokens + completion_tokens), 0)
+			SELECT COALESCE(SUM(prompt_tokens + completion_tokens), 0), COUNT(*)
 			FROM request_logs WHERE api_key_name = ? AND date(time) = ?`,
-			s.KeyName, today).Scan(&s.TokensToday)
+			s.KeyName, today).Scan(&s.TokensToday, &s.RequestsToday)
 		result = append(result, s)
 	}
 	return result, nil
@@ -407,6 +408,16 @@ func (d *DB) TokensTodayForKey(keyName string) int {
 		FROM request_logs WHERE api_key_name = ? AND date(time) = ?`,
 		keyName, today).Scan(&tokens)
 	return tokens
+}
+
+func (d *DB) RequestsTodayForKey(keyName string) int {
+	today := time.Now().UTC().Format("2006-01-02")
+	var count int
+	d.db.QueryRow(`
+		SELECT COUNT(*)
+		FROM request_logs WHERE api_key_name = ? AND date(time) = ?`,
+		keyName, today).Scan(&count)
+	return count
 }
 
 func (d *DB) TotalStats() (requests int, tokens int, err error) {
